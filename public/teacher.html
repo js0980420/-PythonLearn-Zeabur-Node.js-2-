@@ -784,8 +784,8 @@
         }
 
         .chat-input-container {
-            padding: 10px;
-            background: #2a2a2a;
+            padding: 15px;
+            background: #3a3a3a;
             border-top: 1px solid #4a5568;
         }
 
@@ -795,39 +795,46 @@
 
         .chat-input-group {
             display: flex;
-            gap: 8px;
+            gap: 10px;
         }
 
         .chat-input {
             flex: 1;
-            padding: 8px 12px;
+            padding: 10px 12px;
+            background: #2a2a2a;
             border: 1px solid #4a5568;
-            border-radius: 4px;
-            background: #3a3a3a;
+            border-radius: 6px;
             color: var(--text-primary);
+            font-size: 14px;
+            transition: all 0.3s;
         }
 
         .chat-input:focus {
             outline: none;
             border-color: var(--active-student);
+            box-shadow: 0 0 0 2px rgba(72, 187, 120, 0.2);
         }
 
         .chat-send-btn {
-            padding: 8px 16px;
+            padding: 10px 15px;
             background: var(--active-student);
             border: none;
-            border-radius: 4px;
-            color: white;
+            border-radius: 6px;
+            color: #1a1a1a;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: all 0.3s;
         }
 
         .chat-send-btn:hover {
-            background: #2d5016;
+            background: #38b2ac;
+            transform: translateY(-1px);
         }
 
-        .chat-send-btn i {
-            font-size: 14px;
+        .chat-send-btn:disabled {
+            background: #4a5568;
+            color: var(--text-secondary);
+            cursor: not-allowed;
+            transform: none;
         }
 
         /* 響應式設計 */
@@ -1070,35 +1077,82 @@
     <!-- CodeMirror JS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/python/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/matchbrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/autoCloseBrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/comment/comment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/selection/active-line.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/display/fullscreen.min.js"></script>
+
+    <!-- Project Specific JS -->
+    <script src="js/websocket.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/chat.js"></script>
+    <script src="js/editor.js"></script> <!-- 確保 editor.js 被引入 -->
+    <script src="js/conflict.js"></script>
+    <script src="js/ai-assistant.js"></script>
 
     <script>
-        // 全域變數
-        let ws;
-        let codeEditor;
-        let currentStudent = null;
-        let currentRoom = null;
-        let isFullscreen = false;
-        let isPaused = false;
-        let autoFollow = false;
-        let isGridView = false;
-        let rooms = new Map();
-        let students = new Map();
-        let teacherId = null;
-        let reconnectAttempts = 0;
-        let maxReconnectAttempts = 5;
-        let gridViewEditors = new Map(); // 存儲網格檢視中的編輯器實例
-        let refreshInterval;
+        // 初始化全局物件
+        window.UI = new UIManager();
+        window.wsManager = new WebSocketManager();
+        window.chatManager = new ChatManager();
+        // 確保 EditorManager 被初始化並賦值給 window.Editor
+        window.Editor = new EditorManager(); 
+        window.AIAssistant = new AIAssistant();
+        window.ConflictResolver = new ConflictResolver();
 
-        // 初始化
-        document.addEventListener('DOMContentLoaded', function() {
-            // 調試廣播按鈕
-            debugBroadcastButton();
-            
-            initializeCodeEditor();
-            initializeControls();
-            initializeChat(); // 初始化聊天功能
-            initializeBroadcastForm(); // 初始化廣播表單
-            connectWebSocket();
+        let currentRoomId = null;
+        let currentStudentName = null;
+        let followActiveStudent = false; // 自動跟隨模式，預設關閉
+
+        // 頁面加載完成後初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('✅ DOMContentLoaded: 教師後台初始化中...');
+            // 初始化編輯器 - 確保教師頁面中的編輯器也被初始化
+            window.Editor.initialize();
+            window.UI.initTooltips(); // 初始化 Bootstrap Tooltips
+
+            // 載入房間列表
+            fetchRooms();
+
+            // 設定 WebSocket 連接狀態監聽
+            window.onWebSocketConnected = () => {
+                window.UI.showSuccessToast('✅ WebSocket 連線成功!');
+                console.log('✅ 教師監控頁面 WebSocket 連線成功');
+            };
+            window.onWebSocketDisconnected = () => {
+                window.UI.showErrorToast('❌ WebSocket 連線中斷，正在嘗試重連...');
+                console.log('❌ 教師監控頁面 WebSocket 連線中斷');
+            };
+            // 監聽房間選擇
+            document.getElementById('roomList').addEventListener('click', (event) => {
+                const roomItem = event.target.closest('.room-item');
+                if (roomItem) {
+                    const roomId = roomItem.dataset.roomId;
+                    if (currentRoomId === roomId) {
+                        return; // 點擊相同房間，不重複操作
+                    }
+                    console.log(`➡️ 選中房間: ${roomId}`);
+                    currentRoomId = roomId;
+                    updateRoomDisplay(roomId);
+                    window.wsManager.connect(roomId, 'teacher-monitor'); // 教師以特殊用戶名連接
+                }
+            });
+
+            // 監聽學生選擇（如果需要手動跟隨某個學生）
+            document.getElementById('studentList').addEventListener('click', (event) => {
+                const studentItem = event.target.closest('.student-item');
+                if (studentItem) {
+                    const studentId = studentItem.dataset.student;
+                    if (currentStudentName === studentId) {
+                        return; // 點擊相同學生，不重複操作
+                    }
+                    console.log(`➡️ 選中學生: ${studentId}`);
+                    currentStudentName = studentId;
+                    updateStudentDisplay(studentId);
+                    window.wsManager.connect(roomId, 'teacher-monitor'); // 教師以特殊用戶名連接
+                }
+            });
         });
 
         // 調試廣播按鈕函數

@@ -3,6 +3,12 @@ class UIManager {
     constructor() {
         this.currentTab = 'ai'; // 'ai' 或 'chat'
         this.collaborationAlert = null;
+        this.onlineUsers = new Map(); // 用於存儲在線用戶
+        
+        // 確保在建構時初始化全局實例
+        if (!window.UI) {
+            window.UI = this;
+        }
     }
 
     // 初始化界面功能
@@ -93,42 +99,23 @@ class UIManager {
         const loginSection = document.getElementById('loginSection');
         const workspaceSection = document.getElementById('workspaceSection');
         const nameInput = document.getElementById('nameInput');
-        const roomInput = document.getElementById('roomInput');
 
-        if (loginSection) {
-            loginSection.style.display = 'block';
-            loginSection.classList.add('shake-animation'); // 添加抖動效果
-            setTimeout(() => loginSection.classList.remove('shake-animation'), 500);
-        } else {
-            console.error('❌ UI.showJoinForm: loginSection not found');
-        }
+        if (loginSection) loginSection.style.display = 'block';
+        else console.error('❌ UI.showJoinForm: loginSection not found');
 
-        if (workspaceSection) {
-            workspaceSection.style.display = 'none';
-        } else {
-            console.error('❌ UI.showJoinForm: workspaceSection not found');
-        }
+        if (workspaceSection) workspaceSection.style.display = 'none';
+        else console.error('❌ UI.showJoinForm: workspaceSection not found');
         
-        // 保持房間名稱不變，但聚焦到名稱輸入框
+        // 清空並聚焦到名稱輸入框
         if (nameInput) {
-            nameInput.style.borderColor = '#dc3545'; // 紅色邊框提示
+            nameInput.value = '';
             nameInput.focus();
-            nameInput.select(); // 選中當前文字
+            nameInput.style.borderColor = '#dc3545'; // 紅色邊框提示
             
-            // 添加輸入提示
-            nameInput.setAttribute('title', '此名稱已被使用，請選擇其他名稱');
-            nameInput.setAttribute('data-bs-toggle', 'tooltip');
-            nameInput.setAttribute('data-bs-placement', 'top');
-            
-            // 監聽輸入事件，當用戶開始輸入時恢復正常樣式
-            const resetStyle = () => {
+            // 3秒後恢復正常邊框
+            setTimeout(() => {
                 nameInput.style.borderColor = '';
-                nameInput.removeAttribute('title');
-                nameInput.removeAttribute('data-bs-toggle');
-                nameInput.removeAttribute('data-bs-placement');
-                nameInput.removeEventListener('input', resetStyle);
-            };
-            nameInput.addEventListener('input', resetStyle);
+            }, 3000);
         }
         
         // 重置連接狀態
@@ -152,18 +139,32 @@ class UIManager {
             return;
         }
         
-        // 添加調試日誌
-        console.log('🔍 updateOnlineUsers 被調用，用戶數據:', users);
-        console.log('🔍 用戶數量:', users ? users.length : 'undefined');
+        // 更新內部存儲
+        this.onlineUsers.clear();
+        if (users && Array.isArray(users)) {
+            users.forEach(user => {
+                const userId = user.id || user.userId;
+                this.onlineUsers.set(userId, user);
+            });
+        }
         
+        // 更新 UI 顯示
         container.innerHTML = '<strong>在線用戶:</strong> ';
         
-        if (users && users.length > 0) {
-            users.forEach((user, index) => {
-                console.log(`🔍 處理用戶 ${index}:`, user);
+        if (this.onlineUsers.size > 0) {
+            Array.from(this.onlineUsers.values()).forEach((user, index) => {
+                if (index > 0) {
+                    container.appendChild(document.createTextNode(', '));
+                }
                 const span = document.createElement('span');
                 span.className = 'user-indicator';
                 span.textContent = user.userName || user.name || '未知用戶';
+                
+                // 如果是當前用戶，添加特殊樣式
+                if (user.userName === window.wsManager.currentUser) {
+                    span.classList.add('current-user');
+                }
+                
                 container.appendChild(span);
             });
         } else {
@@ -172,6 +173,24 @@ class UIManager {
             span.textContent = '無在線用戶';
             container.appendChild(span);
         }
+    }
+
+    // 獲取在線用戶列表
+    getOnlineUsers() {
+        return Array.from(this.onlineUsers.values());
+    }
+
+    // 添加在線用戶
+    addOnlineUser(user) {
+        const userId = user.id || user.userId;
+        this.onlineUsers.set(userId, user);
+        this.updateOnlineUsers(Array.from(this.onlineUsers.values()));
+    }
+
+    // 移除在線用戶
+    removeOnlineUser(userId) {
+        this.onlineUsers.delete(userId);
+        this.updateOnlineUsers(Array.from(this.onlineUsers.values()));
     }
 
     // 切換到AI助教
@@ -473,8 +492,13 @@ class UIManager {
     }
 }
 
-// 全局UI管理器實例
-const UI = new UIManager();
+// 確保在頁面載入時初始化 UI 管理器
+document.addEventListener('DOMContentLoaded', () => {
+    // 如果還沒有初始化，則創建新實例
+    if (!window.UI) {
+        window.UI = new UIManager();
+    }
+});
 
 // 全局函數供HTML調用
 function joinRoom() {
