@@ -786,8 +786,7 @@ class EditorManager {
             code: code,
             userName: wsManager.currentUser,
             timestamp: Date.now(),
-            // 🔧 新增：標記是否為預警後的發送
-            hasConflictWarning: !forceUpdate && this.shouldShowConflictWarning()
+            version: this.codeVersion + 1
         };
         
         // 如果是強制更新，添加標記
