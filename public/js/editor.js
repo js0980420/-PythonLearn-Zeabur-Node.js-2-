@@ -344,58 +344,83 @@ class EditorManager {
         }
     }
 
-    // 處理遠端代碼變更
-    handleRemoteCodeChange(message) {
-        console.log('📨 收到遠程代碼變更:', message);
+    // 處理遠程代碼變更
+    handleRemoteCodeChange(data) {
+        if (!this.editor) return;
         
         try {
-            // 直接設置編輯器的值
-            if (this.editor) {
-                // 保存當前游標位置和選擇範圍
-                const currentPosition = this.editor.getCursor();
-                const currentSelection = this.editor.getSelection();
-                
-                // 更新代碼
-                this.editor.setValue(message.code || '');
-                
-                // 更新版本號
-                if (message.version !== undefined) {
-                    this.codeVersion = message.version;
-                    this.updateVersionDisplay();
-                }
-                
-                // 如果是其他用戶的更新，恢復游標位置和選擇範圍
-                if (message.userName !== wsManager.currentUser) {
-                    // 確保游標位置在有效範圍內
-                    const totalLines = this.editor.lineCount();
-                    if (currentPosition.line < totalLines) {
-                        const lineContent = this.editor.getLine(currentPosition.line);
-                        this.editor.setCursor({
-                            line: currentPosition.line,
-                            ch: Math.min(currentPosition.ch, lineContent ? lineContent.length : 0)
-                        });
-                        
-                        // 如果有選擇範圍，也恢復它
-                        if (currentSelection && currentSelection.length > 0) {
-                            this.editor.setSelection(
-                                currentSelection.anchor || currentPosition,
-                                currentSelection.head || currentPosition
-                            );
-                        }
-                    }
-                }
-                
-                console.log('✅ 已更新代碼，版本:', message.version);
-            } else {
-                console.error('❌ 編輯器實例不存在');
+            // 如果正在編輯，不要打斷用戶
+            if (this.isEditing) {
+                console.log('⚠️ 用戶正在編輯，暫存遠程更新');
+                // TODO: 可以考慮將更新存入佇列，等用戶完成編輯後再應用
+                return;
             }
+
+            // 保存當前狀態
+            const currentContent = this.editor.getValue();
+            const cursor = this.editor.getCursor();
+            const scroll = this.editor.getScrollInfo();
+            const selections = this.editor.listSelections();
+
+            if (currentContent === data.code) {
+                console.log('📝 代碼內容相同，無需更新');
+                return;
+            }
+
+            // 計算差異並應用更改
+            const dmp = new diff_match_patch();
+            const patches = dmp.patch_make(currentContent, data.code);
             
-            // 可選：顯示提示
-            if (window.UI && message.userName !== wsManager.currentUser) {
-                window.UI.showInfoToast(`${message.userName} 更新了代碼`);
+            if (patches.length === 0) {
+                console.log('📝 無差異需要更新');
+                return;
             }
+
+            // 應用增量更改
+            const [patchedText, results] = dmp.patch_apply(patches, currentContent);
+            
+            // 檢查是否所有補丁都應用成功
+            const allPatchesSuccessful = results.every(result => result);
+            
+            if (!allPatchesSuccessful) {
+                console.warn('⚠️ 部分更改無法應用，進行全量更新');
+                this.setCode(data.code, data.version);
+                return;
+            }
+
+            // 使用 operation 批量處理所有更改
+            this.editor.operation(() => {
+                // 找出每個補丁的位置並使用 replaceRange
+                patches.forEach(patch => {
+                    const start = this.editor.posFromIndex(patch.start1);
+                    const end = this.editor.posFromIndex(patch.start1 + patch.length1);
+                    const newText = patch.diffs.reduce((text, [op, data]) => {
+                        return op !== -1 ? text + data : text;
+                    }, '');
+                    
+                    this.editor.replaceRange(newText, start, end);
+                });
+            });
+
+            // 恢復游標和選擇
+            this.editor.setCursor(cursor);
+            this.editor.scrollTo(scroll.left, scroll.top);
+            if (selections.length > 0) {
+                this.editor.setSelections(selections);
+            }
+
+            // 更新版本號
+            if (data.version !== undefined) {
+                this.codeVersion = data.version;
+                this.updateVersionDisplay();
+            }
+
+            console.log(`✅ 增量更新完成 - 補丁數: ${patches.length}`);
+            
         } catch (error) {
-            console.error('❌ 更新代碼時發生錯誤:', error);
+            console.error('❌ 處理遠程代碼變更時發生錯誤:', error);
+            // 發生錯誤時回退到全量更新
+            this.setCode(data.code, data.version);
         }
     }
 
