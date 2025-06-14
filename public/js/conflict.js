@@ -4,7 +4,10 @@ class ConflictResolverManager {
         this.conflictData = null;
         this.modal = null;
         this.modalElement = null;
+        this.activeConflicts = new Map();
+        this.warningContainer = null;
         console.log('🔧 ConflictResolverManager 已創建');
+        this.initializeUI();
     }
 
     // 初始化衝突解決器
@@ -36,6 +39,139 @@ class ConflictResolverManager {
             }, 1000);
         } else {
             console.log('✅ ConflictResolver modal element found');
+        }
+    }
+
+    // 初始化 UI
+    initializeUI() {
+        // 創建衝突警告容器
+        this.warningContainer = document.createElement('div');
+        this.warningContainer.id = 'conflictWarning';
+        this.warningContainer.className = 'conflict-warning';
+        document.body.appendChild(this.warningContainer);
+    }
+
+    // 顯示衝突警告
+    showConflictWarning(conflictingUsers) {
+        if (!this.warningContainer) return;
+        
+        // 檢查是否已經顯示相同的警告
+        const conflictKey = conflictingUsers.map(u => u.userName).sort().join(',');
+        if (this.activeConflicts.has(conflictKey)) {
+            console.log('⚠️ 已存在相同的衝突警告');
+            return;
+        }
+        
+        // 創建警告元素
+        const warningElement = document.createElement('div');
+        warningElement.className = 'alert alert-warning alert-dismissible fade show';
+        warningElement.setAttribute('role', 'alert');
+        
+        const userNames = conflictingUsers.map(user => user.userName).join('、');
+        
+        warningElement.innerHTML = `
+            <div class="alert-content">
+                <strong>⚠️ 衝突警告！</strong>
+                <p>用戶 ${userNames} 正在編輯相同的程式碼區域。</p>
+                <div class="btn-group mt-2">
+                    <button type="button" class="btn btn-sm btn-outline-warning accept-changes">
+                        接受變更
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-warning reject-changes">
+                        拒絕變更
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-warning share-code">
+                        分享代碼
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-warning analyze-conflict">
+                        AI 分析
+                    </button>
+                </div>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        `;
+        
+        // 添加事件監聽器
+        warningElement.querySelector('.accept-changes').addEventListener('click', () => {
+            this.handleAcceptChanges(conflictKey);
+        });
+        
+        warningElement.querySelector('.reject-changes').addEventListener('click', () => {
+            this.handleRejectChanges(conflictKey);
+        });
+        
+        warningElement.querySelector('.share-code').addEventListener('click', () => {
+            this.handleShareCode(conflictKey);
+        });
+        
+        warningElement.querySelector('.analyze-conflict').addEventListener('click', () => {
+            this.handleAnalyzeConflict(conflictingUsers);
+        });
+        
+        warningElement.querySelector('.btn-close').addEventListener('click', () => {
+            this.clearConflictWarning(conflictKey);
+        });
+        
+        // 保存警告
+        this.activeConflicts.set(conflictKey, {
+            element: warningElement,
+            users: conflictingUsers
+        });
+        
+        // 顯示警告
+        this.warningContainer.appendChild(warningElement);
+        
+        // 自動消失計時器
+        setTimeout(() => {
+            this.clearConflictWarning(conflictKey);
+        }, 30000); // 30 秒後自動消失
+    }
+
+    // 清除特定衝突警告
+    clearConflictWarning(key) {
+        const conflict = this.activeConflicts.get(key);
+        if (conflict) {
+            const { element } = conflict;
+            element.classList.remove('show');
+            setTimeout(() => {
+                element.remove();
+                this.activeConflicts.delete(key);
+            }, 150);
+        }
+    }
+
+    // 清除所有衝突警告
+    clearAllWarnings() {
+        for (const key of this.activeConflicts.keys()) {
+            this.clearConflictWarning(key);
+        }
+    }
+
+    // 處理接受變更
+    handleAcceptChanges(conflictKey) {
+        console.log('✅ 接受變更:', conflictKey);
+        // TODO: 實現接受變更邏輯
+        this.clearConflictWarning(conflictKey);
+    }
+
+    // 處理拒絕變更
+    handleRejectChanges(conflictKey) {
+        console.log('❌ 拒絕變更:', conflictKey);
+        // TODO: 實現拒絕變更邏輯
+        this.clearConflictWarning(conflictKey);
+    }
+
+    // 處理分享代碼
+    handleShareCode(conflictKey) {
+        console.log('📤 分享代碼:', conflictKey);
+        // TODO: 實現代碼分享邏輯
+    }
+
+    // 處理 AI 分析
+    handleAnalyzeConflict(conflictingUsers) {
+        console.log('🤖 AI 分析衝突:', conflictingUsers);
+        if (window.aiAssistant) {
+            aiAssistant.analyzeConflict(conflictingUsers);
         }
     }
 

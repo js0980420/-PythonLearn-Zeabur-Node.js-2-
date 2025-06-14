@@ -966,6 +966,88 @@ class EditorManager {
 
         console.log(`📂 更新歷史記錄 UI，共 ${history.length} 個項目`);
     }
+
+    // 檢查代碼衝突
+    checkConflicts(change) {
+        if (!this.editor || !wsManager) return;
+        
+        // 獲取當前房間的用戶列表
+        const activeUsers = wsManager.getActiveUsers();
+        
+        // 如果房間內只有一個用戶，不需要檢查衝突
+        if (activeUsers.length <= 1) {
+            console.log('👤 房間內只有一個用戶，無需檢查衝突');
+            return;
+        }
+        
+        // 獲取變更的行範圍
+        const from = change.from.line;
+        const to = change.to.line;
+        
+        // 檢查其他用戶是否正在編輯相同區域
+        const conflictingUsers = [];
+        activeUsers.forEach(user => {
+            // 跳過自己
+            if (user.userName === wsManager.currentUser) return;
+            
+            // 檢查用戶是否正在編輯
+            if (user.isEditing && user.position) {
+                const userLine = user.position.line;
+                
+                // 檢查是否在變更範圍內或附近（上下各1行）
+                if (userLine >= from - 1 && userLine <= to + 1) {
+                    conflictingUsers.push(user);
+                }
+            }
+        });
+        
+        // 如果有衝突的用戶，顯示警告
+        if (conflictingUsers.length > 0) {
+            console.log('⚠️ 檢測到代碼衝突:', conflictingUsers);
+            
+            // 觸發衝突事件
+            this.emit('conflict', {
+                type: 'editing_conflict',
+                users: conflictingUsers,
+                range: { from, to }
+            });
+            
+            // 顯示衝突警告
+            if (window.conflictManager) {
+                conflictManager.showConflictWarning(conflictingUsers);
+            }
+        }
+    }
+    
+    // 更新協作用戶狀態
+    updateCollaboratorStatus(userData) {
+        const { userName, isEditing, position } = userData;
+        
+        // 如果是自己，不需要更新
+        if (userName === wsManager.currentUser) return;
+        
+        // 更新用戶狀態
+        if (isEditing) {
+            // 檢查是否需要觸發衝突檢測
+            if (this.isEditing && position) {
+                const currentLine = this.editor.getCursor().line;
+                const userLine = position.line;
+                
+                // 如果兩個用戶編輯的行相差在1行以內，觸發衝突檢測
+                if (Math.abs(currentLine - userLine) <= 1) {
+                    this.checkConflicts({
+                        from: { line: Math.min(currentLine, userLine) },
+                        to: { line: Math.max(currentLine, userLine) }
+                    });
+                }
+            }
+        } else {
+            // 用戶停止編輯，清除相關衝突標記
+            if (window.conflictManager) {
+                conflictManager.clearConflictWarning(userName);
+            }
+        }
+    }
 }
 
 // 全局編輯器管理器實例

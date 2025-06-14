@@ -4,12 +4,86 @@ class WebSocketManager {
         this.ws = null;
         this.currentUser = null;
         this.currentRoom = null;
+        this.isConnected = false;
+        this.activeUsers = new Map();
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
         this.reconnectDelay = 1000;
         this.messageQueue = [];
         this.heartbeatInterval = null;
         this.lastHeartbeat = 0;
+    }
+
+    // 獲取當前房間的活躍用戶列表
+    getActiveUsers() {
+        return Array.from(this.activeUsers.values());
+    }
+
+    // 更新用戶狀態
+    updateUserStatus(userData) {
+        const { userName, isEditing, position } = userData;
+        
+        if (userName === this.currentUser) return;
+        
+        // 更新或添加用戶
+        this.activeUsers.set(userName, {
+            userName,
+            isEditing: isEditing || false,
+            position: position || null,
+            lastActivity: Date.now()
+        });
+        
+        // 通知編輯器更新協作狀態
+        if (window.editorManager) {
+            editorManager.updateCollaboratorStatus(userData);
+        }
+        
+        console.log(`👥 更新用戶狀態: ${userName}, 編輯中: ${isEditing}`);
+    }
+    
+    // 移除用戶
+    removeUser(userName) {
+        if (this.activeUsers.has(userName)) {
+            this.activeUsers.delete(userName);
+            console.log(`👋 用戶離開: ${userName}`);
+            
+            // 清除相關的衝突警告
+            if (window.conflictManager) {
+                conflictManager.clearConflictWarning(userName);
+            }
+        }
+    }
+    
+    // 處理用戶消息
+    handleUserMessage(message) {
+        switch (message.type) {
+            case 'user_join':
+                this.updateUserStatus({
+                    userName: message.userName,
+                    isEditing: false
+                });
+                break;
+                
+            case 'user_leave':
+                this.removeUser(message.userName);
+                break;
+                
+            case 'editing_status':
+                this.updateUserStatus(message);
+                break;
+        }
+    }
+    
+    // 清理非活躍用戶
+    cleanupInactiveUsers() {
+        const now = Date.now();
+        const timeout = 30000; // 30 秒超時
+        
+        for (const [userName, userData] of this.activeUsers) {
+            if (now - userData.lastActivity > timeout) {
+                this.removeUser(userName);
+            }
+        }
     }
 
     // 檢查連接狀態
