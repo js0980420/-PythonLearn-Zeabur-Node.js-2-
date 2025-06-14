@@ -141,24 +141,6 @@
                                     <button class="btn btn-outline-primary btn-sm" onclick="globalSaveCode()">
                                         <i class="fas fa-save"></i> 保存
                                     </button>
-                                <button class="btn btn-outline-primary btn-sm dropdown-toggle dropdown-toggle-split" type="button" data-bs-toggle="dropdown" id="saveDropdownBtn">
-                                    <span class="visually-hidden">Toggle Dropdown</span>
-                                </button>
-                                <ul class="dropdown-menu" id="saveCodeOptions">
-                                    <li><h6 class="dropdown-header">保存到槽位</h6></li>
-                                    <li><a class="dropdown-item" href="#" onclick="globalSaveToSlot(1)">
-                                        <i class="fas fa-bookmark text-primary"></i> <span id="slot1Name">槽位 1</span>
-                                    </a></li>
-                                    <li><a class="dropdown-item" href="#" onclick="globalSaveToSlot(2)">
-                                        <i class="fas fa-bookmark text-success"></i> <span id="slot2Name">槽位 2</span>
-                                    </a></li>
-                                    <li><a class="dropdown-item" href="#" onclick="globalSaveToSlot(3)">
-                                        <i class="fas fa-bookmark text-warning"></i> <span id="slot3Name">槽位 3</span>
-                                    </a></li>
-                                    <li><a class="dropdown-item" href="#" onclick="globalSaveToSlot(4)">
-                                        <i class="fas fa-bookmark text-danger"></i> <span id="slot4Name">槽位 4</span>
-                                    </a></li>
-                                </ul>
                                     <button class="btn btn-outline-secondary btn-sm" type="button" onclick="globalLoadCode('latest')">
                                         <i class="fas fa-sync-alt"></i> 載入
                                     </button>
@@ -170,20 +152,6 @@
                                         <li><a class="dropdown-item" href="#" onclick="globalLoadCode('latest')">
                                             <i class="fas fa-sync-alt text-success"></i> 載入最新
                                         </a></li>
-                                    <li><hr class="dropdown-divider"></li>
-                                    <li><h6 class="dropdown-header">槽位記錄</h6></li>
-                                    <li><a class="dropdown-item" href="#" onclick="globalLoadFromSlot(1)">
-                                        <i class="fas fa-bookmark text-primary"></i> <span id="loadSlot1Name">槽位 1</span>
-                                    </a></li>
-                                    <li><a class="dropdown-item" href="#" onclick="globalLoadFromSlot(2)">
-                                        <i class="fas fa-bookmark text-success"></i> <span id="loadSlot2Name">槽位 2</span>
-                                    </a></li>
-                                    <li><a class="dropdown-item" href="#" onclick="globalLoadFromSlot(3)">
-                                        <i class="fas fa-bookmark text-warning"></i> <span id="loadSlot3Name">槽位 3</span>
-                                    </a></li>
-                                    <li><a class="dropdown-item" href="#" onclick="globalLoadFromSlot(4)">
-                                        <i class="fas fa-bookmark text-danger"></i> <span id="loadSlot4Name">槽位 4</span>
-                                    </a></li>
                                         <li><hr class="dropdown-divider"></li>
                                         <li><h6 class="dropdown-header">歷史版本</h6></li>
                                         <li id="historyEmptyMessage"><span class="dropdown-item-text text-muted">無歷史版本</span></li>
@@ -363,55 +331,16 @@
     <script src="js/chat.js"></script>
     <script src="js/ai-assistant.js"></script>
     <script src="js/conflict.js"></script>
-    <script src="js/save-load.js"></script>
     
     <script>
         // 全域事件處理函數 (避免HTML中的onclick直接調用模組內部方法導致可能的初始化順序問題)
         function globalJoinRoom() { if(UI) UI.joinRoom(); else console.error("UI not ready"); }
         function globalLeaveRoom() { if(UI) UI.leaveRoom(); else console.error("UI not ready"); }
         function globalLoadCode(loadType) { 
-            console.log('🔄 全域載入函數被調用:', loadType);
-            if (window.SaveLoadManager) {
-                if (loadType === 'latest') {
-                    window.SaveLoadManager.loadLatestCode();
-                } else {
-                    window.SaveLoadManager.showLoadDialog();
-                }
-            } else {
-                console.error('❌ SaveLoadManager 未初始化');
-                alert('載入功能尚未準備好，請稍後再試');
-            }
+            if(Editor) Editor.loadCode(loadType); 
+            else console.error("Editor not ready"); 
         }
-        function globalSaveCode() { 
-            console.log('💾 全域保存函數被調用');
-            if (window.SaveLoadManager) {
-                window.SaveLoadManager.saveCode();
-            } else if (Editor) {
-                // 降級到編輯器的保存功能
-                Editor.saveCode(); 
-            } else {
-                console.error('❌ 保存功能未準備好');
-                alert('保存功能尚未準備好，請稍後再試');
-            }
-        }
-        function globalSaveToSlot(slotNumber) {
-            console.log('💾 保存到槽位:', slotNumber);
-            if (window.SaveLoadManager) {
-                window.SaveLoadManager.saveToSlot(slotNumber);
-            } else {
-                console.error('❌ SaveLoadManager 未初始化');
-                alert('保存功能尚未準備好，請稍後再試');
-            }
-        }
-        function globalLoadFromSlot(slotNumber) {
-            console.log('📂 從槽位載入:', slotNumber);
-            if (window.SaveLoadManager) {
-                window.SaveLoadManager.loadFromSlot(slotNumber);
-            } else {
-                console.error('❌ SaveLoadManager 未初始化');
-                alert('載入功能尚未準備好，請稍後再試');
-            }
-        }
+        function globalSaveCode() { if(Editor) Editor.saveCode(); else console.error("Editor not ready"); }
         function globalRunCode() { if(Editor) Editor.runCode(); else console.error("Editor not ready"); }
         function globalClearOutput() { if(Editor) Editor.clearOutput(); else console.error("Editor not ready"); }
         function globalSwitchToAI() { if(UI) UI.switchToAI(); else console.error("UI not ready"); }
@@ -789,74 +718,6 @@
                 }, 500);
             }
         }
-        
-        // 🔧 編輯器測試和修復函數
-        function globalTestEditor() {
-            console.log('🧪 開始編輯器診斷...');
-            
-            if (!window.Editor) {
-                console.error('❌ Editor 對象不存在');
-                alert('編輯器模組未載入');
-                return;
-            }
-            
-            if (!window.Editor.editor) {
-                console.error('❌ CodeMirror 實例不存在');
-                alert('編輯器實例未創建');
-                return;
-            }
-            
-            const cm = window.Editor.editor;
-            
-            // 檢查基本狀態
-            console.log('📊 編輯器狀態:');
-            console.log('   - 存在:', !!cm);
-            console.log('   - 只讀:', cm.getOption('readOnly'));
-            console.log('   - 聚焦:', cm.hasFocus());
-            console.log('   - 內容長度:', cm.getValue().length);
-            
-            // 強制修復
-            cm.setOption('readOnly', false);
-            cm.refresh();
-            cm.focus();
-            
-            // 測試輸入
-            const testText = '# 測試輸入 - ' + new Date().toLocaleTimeString();
-            cm.setValue(testText);
-            
-            // 檢查是否成功
-            if (cm.getValue() === testText) {
-                console.log('✅ 編輯器輸入測試成功');
-                alert('✅ 編輯器已修復，可以正常輸入！');
-            } else {
-                console.error('❌ 編輯器輸入測試失敗');
-                alert('❌ 編輯器仍有問題，請重新載入頁面');
-            }
-        }
-        
-        // 🔧 編輯器強制重新初始化函數
-        function globalReinitEditor() {
-            console.log('🔄 重新初始化編輯器...');
-            
-            // 銷毀現有編輯器
-            if (window.Editor && window.Editor.editor) {
-                window.Editor.editor.toTextArea();
-                delete window.Editor.editor;
-            }
-            
-            // 重新初始化
-            if (window.Editor && typeof window.Editor.initialize === 'function') {
-                window.Editor.initialize();
-                console.log('✅ 編輯器重新初始化完成');
-                
-                // 延遲測試
-                setTimeout(() => {
-                    globalTestEditor();
-                }, 500);
-            } else {
-                console.error('❌ 無法重新初始化編輯器');
-            }
-        }
 
         // DOMContentLoaded 事件處理
         document.addEventListener('DOMContentLoaded', function() {
@@ -877,41 +738,16 @@
             if (typeof Editor !== 'undefined' && Editor.initialize) {
                 Editor.initialize();
                 console.log('✅ 編輯器模組初始化完成');
-                
-                // 🔧 額外的編輯器檢查和修復
-                setTimeout(() => {
-                    if (window.Editor && window.Editor.editor) {
-                        const cm = window.Editor.editor;
-                        
-                        // 檢查編輯器狀態
-                        console.log('🔍 編輯器狀態檢查:');
-                        console.log('   - 編輯器存在:', !!cm);
-                        console.log('   - 只讀模式:', cm.getOption('readOnly'));
-                        console.log('   - 已聚焦:', cm.hasFocus());
-                        
-                        // 確保編輯器可以輸入
-                        cm.setOption('readOnly', false);
-                        cm.refresh();
-                        cm.focus();
-                        
-                        // 測試輸入功能
-                        cm.setValue('# 歡迎使用 Python 協作編輯器\n# 您可以開始輸入代碼...\n\n');
-                        
-                        console.log('✅ 編輯器已準備就緒，可以開始輸入');
-                    } else {
-                        console.error('❌ 編輯器對象不存在');
-                    }
-                }, 200);
             } else {
                 console.error('❌ 編輯器模組初始化失敗');
             }
             
             // 初始化WebSocket管理器
-            if (typeof window.wsManager !== 'undefined') {
-                // WebSocket管理器已準備就緒
-                console.log('✅ WebSocket管理器已準備就緒');
+            if (typeof wsManager !== 'undefined' && wsManager.initialize) {
+                wsManager.initialize();
+                console.log('✅ WebSocket管理器初始化完成');
             } else {
-                console.error('❌ WebSocket管理器未載入');
+                console.error('❌ WebSocket管理器初始化失敗');
             }
             
             // 初始化AI助教
