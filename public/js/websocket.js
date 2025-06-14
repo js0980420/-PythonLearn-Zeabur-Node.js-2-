@@ -383,7 +383,7 @@ class WebSocketManager {
                     
                     // 保存當前游標位置和選擇範圍
                     const editor = window.Editor.editor;
-                    const currentPosition = editor.getCursor();
+                    const currentPosition = editor.getCursorPosition();
                     const currentSelection = editor.getSelection();
                     
                     // 更新代碼
@@ -417,19 +417,6 @@ class WebSocketManager {
                     throw new Error('無法更新代碼：編輯器不可用');
                 }
             }
-            
-            // 更新最後遠程變更時間
-            if (window.Editor) {
-                window.Editor.lastRemoteChangeTime = Date.now();
-            }
-            
-            // 更新協作用戶列表
-            if (message.userName && message.userName !== this.currentUser) {
-                if (window.Editor && typeof window.Editor.updateCollaboratingUsers === 'function') {
-                    window.Editor.updateCollaboratingUsers(message.userName);
-                }
-            }
-            
         } catch (error) {
             console.error('❌ 處理代碼變更時發生錯誤:', error);
             // 顯示錯誤提示

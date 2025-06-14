@@ -351,7 +351,7 @@ class EditorManager {
             // 直接設置編輯器的值
             if (this.editor) {
                 // 保存當前游標位置和選擇範圍
-                const currentPosition = this.editor.getCursor();
+                const currentPosition = this.editor.getCursorPosition();
                 const currentSelection = this.editor.getSelection();
                 
                 // 更新代碼
