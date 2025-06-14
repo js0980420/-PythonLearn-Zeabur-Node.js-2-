@@ -378,25 +378,20 @@ class WebSocketManager {
                 console.log('   - handleRemoteCodeChange 方法存在:', !!(window.Editor && window.Editor.handleRemoteCodeChange));
                 
                 // 降級處理：直接更新代碼
-                if (window.Editor && typeof window.Editor.editor?.setValue === 'function') {
-                    console.log('🔄 降級處理：直接設置代碼');
+                if (window.Editor && typeof window.Editor.setCode === 'function') {
+                    console.log('🔄 收到遠程代碼更新');
                     
-                    const editor = window.Editor.editor;
-                    
-                    // 更新代碼，但不改變游標位置
-                    const prevScrollInfo = editor.getScrollInfo();
-                    editor.setValue(message.code || '');
-                    editor.scrollTo(prevScrollInfo.left, prevScrollInfo.top);
-                    
-                    // 更新版本號
-                    if (message.version !== undefined) {
-                        window.Editor.codeVersion = message.version;
-                        if (typeof window.Editor.updateVersionDisplay === 'function') {
-                            window.Editor.updateVersionDisplay();
-                        }
+                    // 檢查是否是自己發送的更新
+                    if (message.userName === this.currentUser) {
+                        console.log('👤 忽略自己發送的更新');
+                        return;
                     }
+                    
+                    // 使用新的 setCode 方法更新代碼
+                    window.Editor.setCode(message.code || '', message.version);
+                    
                 } else {
-                    throw new Error('無法更新代碼：編輯器不可用');
+                    console.error('❌ 無法更新代碼：編輯器不可用');
                 }
             }
             

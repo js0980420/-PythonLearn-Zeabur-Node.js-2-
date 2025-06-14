@@ -600,24 +600,33 @@ class EditorManager {
     // 設置代碼
     setCode(code, version = null) {
         if (this.editor) {
-            // 暫時停用編輯狀態檢測，避免觸發遠程更新
-            const wasEditing = this.isEditing;
-            this.isEditing = false;
-            
-            // 設置代碼內容
-            this.editor.setValue(code || '');
-            
-            // 更新版本號
-            if (version !== null) {
-                this.codeVersion = version;
-                this.updateVersionDisplay();
-                console.log(`✅ 代碼已設置 - 長度: ${(code || '').length}, 版本: ${this.codeVersion}`);
+            // 如果正在編輯，不要打斷用戶
+            if (this.isEditing) {
+                console.log('⚠️ 用戶正在編輯，暫不更新代碼');
+                return;
             }
             
-            // 恢復編輯狀態（如果之前在編輯）
-            setTimeout(() => {
-                this.isEditing = wasEditing;
-            }, 100);
+            try {
+                // 保存當前游標和滾動位置
+                const cursor = this.editor.getCursor();
+                const scroll = this.editor.getScrollInfo();
+                
+                // 使用 setValue 更新內容，但不觸發 change 事件
+                this.editor.setValue(code || '');
+                
+                // 立即恢復游標和滾動位置
+                this.editor.setCursor(cursor);
+                this.editor.scrollTo(scroll.left, scroll.top);
+                
+                // 更新版本號
+                if (version !== null) {
+                    this.codeVersion = version;
+                    this.updateVersionDisplay();
+                    console.log(`✅ 代碼已設置 - 長度: ${(code || '').length}, 版本: ${this.codeVersion}`);
+                }
+            } catch (error) {
+                console.error('設置代碼時發生錯誤:', error);
+            }
         }
     }
 
