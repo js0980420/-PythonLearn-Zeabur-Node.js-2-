@@ -343,17 +343,32 @@ class EditorManager {
         }
     }
 
-    // 處理遠端代碼變更 - 增強版衝突檢測
+    // 處理遠端代碼變更
     handleRemoteCodeChange(message) {
         console.log('📨 收到遠程代碼變更:', message);
         
-        // 直接應用遠程代碼變更，暫時移除衝突檢測
-        console.log('✅ 直接應用遠程代碼變更');
-        this.applyRemoteCode(message);
-        
-        // 可選：顯示提示
-        if (window.UI && message.userName !== wsManager.currentUser) {
-            window.UI.showInfoToast(`${message.userName} 更新了代碼`);
+        try {
+            // 直接設置編輯器的值
+            if (this.editor) {
+                this.editor.setValue(message.code || '');
+                
+                // 更新版本號
+                if (message.version !== undefined) {
+                    this.codeVersion = message.version;
+                    this.updateVersionDisplay();
+                }
+                
+                console.log('✅ 已更新代碼，版本:', message.version);
+            } else {
+                console.error('❌ 編輯器實例不存在');
+            }
+            
+            // 可選：顯示提示
+            if (window.UI && message.userName !== wsManager.currentUser) {
+                window.UI.showInfoToast(`${message.userName} 更新了代碼`);
+            }
+        } catch (error) {
+            console.error('❌ 更新代碼時發生錯誤:', error);
         }
     }
 
@@ -591,13 +606,12 @@ class EditorManager {
         // this.updateVersionDisplay();
     }
 
-    // 更新版本號顯示（移除此功能）
+    // 更新版本號顯示
     updateVersionDisplay() {
-        // 註釋掉版本號顯示功能
-        // const versionElement = document.getElementById('codeVersion');
-        // if (versionElement) {
-        //     versionElement.textContent = `版本: ${this.codeVersion}`;
-        // }
+        const versionDisplay = document.getElementById('codeVersion');
+        if (versionDisplay) {
+            versionDisplay.textContent = `v${this.codeVersion || 0}`;
+        }
     }
 
     // 移除協作用戶

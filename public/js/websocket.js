@@ -367,19 +367,35 @@ class WebSocketManager {
         console.log('   - 版本號:', message.version);
         console.log('   - 代碼長度:', (message.code || '').length);
         
-        // 確保編輯器存在並調用處理方法
-        if (window.Editor && typeof window.Editor.handleRemoteCodeChange === 'function') {
-            console.log('🔄 調用編輯器處理遠程代碼變更...');
-            window.Editor.handleRemoteCodeChange(message);
-        } else {
-            console.error('❌ 編輯器未找到或方法不存在');
-            console.log('   - Editor 存在:', !!window.Editor);
-            console.log('   - handleRemoteCodeChange 方法存在:', !!(window.Editor && window.Editor.handleRemoteCodeChange));
-            
-            // 降級處理：直接更新代碼
-            if (window.Editor && typeof window.Editor.setCode === 'function') {
-                console.log('🔄 降級處理：直接設置代碼');
-                window.Editor.setCode(message.code, message.version);
+        try {
+            // 確保編輯器存在並調用處理方法
+            if (window.Editor && typeof window.Editor.handleRemoteCodeChange === 'function') {
+                console.log('🔄 調用編輯器處理遠程代碼變更...');
+                window.Editor.handleRemoteCodeChange(message);
+            } else {
+                console.error('❌ 編輯器未找到或方法不存在');
+                console.log('   - Editor 存在:', !!window.Editor);
+                console.log('   - handleRemoteCodeChange 方法存在:', !!(window.Editor && window.Editor.handleRemoteCodeChange));
+                
+                // 降級處理：直接更新代碼
+                if (window.Editor && typeof window.Editor.editor?.setValue === 'function') {
+                    console.log('🔄 降級處理：直接設置代碼');
+                    window.Editor.editor.setValue(message.code || '');
+                    if (message.version !== undefined) {
+                        window.Editor.codeVersion = message.version;
+                        if (typeof window.Editor.updateVersionDisplay === 'function') {
+                            window.Editor.updateVersionDisplay();
+                        }
+                    }
+                } else {
+                    throw new Error('無法更新代碼：編輯器不可用');
+                }
+            }
+        } catch (error) {
+            console.error('❌ 處理代碼變更時發生錯誤:', error);
+            // 顯示錯誤提示
+            if (window.UI && typeof window.UI.showErrorToast === 'function') {
+                window.UI.showErrorToast('更新代碼時發生錯誤，請重新整理頁面');
             }
         }
     }
