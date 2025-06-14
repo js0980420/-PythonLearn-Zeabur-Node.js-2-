@@ -6,6 +6,8 @@ class ConflictResolverManager {
         this.modalElement = null;
         this.activeConflicts = new Map();
         this.warningContainer = null;
+        this.lastConflictTimes = new Map(); // 記錄每行最後的衝突時間
+        this.massiveChangeOperations = new Set(['load', 'import', 'paste', 'cut']); // 大量修改操作類型
         console.log('🔧 ConflictResolverManager 已創建');
         this.initializeUI();
     }
@@ -52,11 +54,33 @@ class ConflictResolverManager {
     }
 
     // 顯示衝突警告
-    showConflictWarning(conflictingUsers) {
+    showConflictWarning(conflictingUsers, operation = null, lineNumber = null) {
         if (!this.warningContainer) return;
         
+        // 檢查是否是大量修改操作
+        const isMassiveChange = operation && this.massiveChangeOperations.has(operation);
+        
+        // 生成衝突鍵值
+        const conflictKey = lineNumber 
+            ? `${lineNumber}-${conflictingUsers.map(u => u.userName).sort().join(',')}`
+            : conflictingUsers.map(u => u.userName).sort().join(',');
+        
+        // 檢查時間限制（對於非大量修改操作）
+        if (!isMassiveChange && lineNumber) {
+            const now = Date.now();
+            const lastTime = this.lastConflictTimes.get(conflictKey) || 0;
+            
+            // 如果同一行的上次衝突警告在一分鐘內，則不顯示
+            if (now - lastTime < 60000) {
+                console.log('⏱️ 忽略頻繁的衝突警告:', conflictKey);
+                return;
+            }
+            
+            // 更新最後衝突時間
+            this.lastConflictTimes.set(conflictKey, now);
+        }
+        
         // 檢查是否已經顯示相同的警告
-        const conflictKey = conflictingUsers.map(u => u.userName).sort().join(',');
         if (this.activeConflicts.has(conflictKey)) {
             console.log('⚠️ 已存在相同的衝突警告');
             return;
@@ -69,10 +93,19 @@ class ConflictResolverManager {
         
         const userNames = conflictingUsers.map(user => user.userName).join('、');
         
+        // 根據操作類型顯示不同的警告訊息
+        let warningMessage = '';
+        if (isMassiveChange) {
+            warningMessage = `<strong>⚠️ 重要修改警告！</strong>
+                <p>用戶 ${userNames} 正在進行大量程式碼修改 (${operation})。</p>`;
+        } else {
+            warningMessage = `<strong>⚠️ 衝突警告！</strong>
+                <p>用戶 ${userNames} 正在編輯${lineNumber ? `第 ${lineNumber} 行附近的` : '相同的'}程式碼區域。</p>`;
+        }
+        
         warningElement.innerHTML = `
             <div class="alert-content">
-                <strong>⚠️ 衝突警告！</strong>
-                <p>用戶 ${userNames} 正在編輯相同的程式碼區域。</p>
+                ${warningMessage}
                 <div class="btn-group mt-2">
                     <button type="button" class="btn btn-sm btn-outline-warning accept-changes">
                         接受變更
@@ -115,16 +148,19 @@ class ConflictResolverManager {
         // 保存警告
         this.activeConflicts.set(conflictKey, {
             element: warningElement,
-            users: conflictingUsers
+            users: conflictingUsers,
+            lineNumber: lineNumber,
+            operation: operation,
+            timestamp: Date.now()
         });
         
         // 顯示警告
         this.warningContainer.appendChild(warningElement);
         
-        // 自動消失計時器
+        // 自動消失計時器（大量修改操作延長顯示時間）
         setTimeout(() => {
             this.clearConflictWarning(conflictKey);
-        }, 30000); // 30 秒後自動消失
+        }, isMassiveChange ? 60000 : 30000); // 大量修改 60 秒，一般衝突 30 秒
     }
 
     // 清除特定衝突警告

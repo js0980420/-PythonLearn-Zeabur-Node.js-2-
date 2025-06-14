@@ -657,6 +657,7 @@ class WebSocketManager {
                     remoteCode: message.conflictData?.remoteCode || '',
                     localVersion: message.conflictData?.localVersion || 0,
                     remoteVersion: message.conflictData?.remoteVersion || 0,
+                    operation: message.operation || null,
                     changeDetails: message.conflictDetails || {},
                     timestamp: Date.now()
                 };
@@ -668,25 +669,33 @@ class WebSocketManager {
                 // 在聊天室顯示詳細狀態
                 if (window.Chat) {
                     const changeInfo = message.conflictDetails?.changeType || {};
+                    const operationInfo = message.operation ? ` (${message.operation})` : '';
                     window.Chat.addSystemMessage(
                         `⚠️ 協作衝突通知:\n` +
-                        `• ${message.conflictWith} 正在處理您的代碼修改\n` +
+                        `• ${message.conflictWith} 正在處理您的代碼修改${operationInfo}\n` +
                         `• 變更類型: ${changeInfo.description || '未知'}\n` +
                         `• 修改行數: +${changeInfo.addedLines || 0}/-${changeInfo.removedLines || 0}\n` +
                         `• 時間差: ${Math.round((message.conflictDetails?.timeDiff || 0)/1000)}秒\n` +
                         `請等待對方處理或在聊天室討論...`
                     );
                 }
-            } else {
-                // 降級處理
-                if (window.UI) {
-                    window.UI.showToast(
-                        '協作衝突',
-                        `${message.conflictWith} 正在處理您的代碼修改，請稍候...`,
-                        'warning',
-                        5000
-                    );
-                }
+            }
+        } else {
+            // 其他用戶的衝突處理界面
+            if (window.ConflictResolver) {
+                const conflictInfo = {
+                    ...message,
+                    isSender: false,
+                    operation: message.operation || null
+                };
+                window.ConflictResolver.showConflictModal(
+                    message.localCode || '',
+                    message.remoteCode || '',
+                    message.userName || '其他同學',
+                    message.localVersion || 0,
+                    message.remoteVersion || 0,
+                    message.operation
+                );
             }
         }
     }
@@ -862,6 +871,26 @@ class WebSocketManager {
         
         this.currentRoom = null;
         console.log('👋 已離開房間');
+    }
+
+    // 發送代碼變更
+    sendCodeChange(code, forced = false, operation = null) {
+        if (!this.isConnected()) {
+            console.error('❌ WebSocket 未連接，無法發送代碼變更');
+            return;
+        }
+        
+        const message = {
+            type: 'code_change',
+            code: code,
+            forced: forced,
+            operation: operation,
+            timestamp: Date.now(),
+            version: window.Editor?.codeVersion || 0
+        };
+        
+        this.sendMessage(message);
+        console.log('📤 代碼變更已發送:', { forced, operation });
     }
 }
 

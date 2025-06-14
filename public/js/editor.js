@@ -728,7 +728,7 @@ class EditorManager {
     }
 
     // 發送代碼變更 - 🔧 增加衝突預警機制
-    sendCodeChange(forceUpdate = false) {
+    sendCodeChange(forceUpdate = false, operation = null) {
         if (!wsManager.isConnected() || !this.editor) {
             console.log('❌ WebSocket 未連接或編輯器未初始化，無法發送代碼變更');
             return;
@@ -736,7 +736,7 @@ class EditorManager {
 
         const code = this.editor.getValue();
         
-        console.log(`📤 準備發送代碼變更 - 強制發送: ${forceUpdate}, 用戶: ${wsManager.currentUser}`);
+        console.log(`📤 準備發送代碼變更 - 強制發送: ${forceUpdate}, 用戶: ${wsManager.currentUser}, 操作類型: ${operation || '一般編輯'}`);
         
         // 🔧 新增：衝突預警檢查（只在非強制更新時進行）
         if (!forceUpdate && this.shouldShowConflictWarning()) {
@@ -758,31 +758,23 @@ class EditorManager {
                                     <p><strong>檢測到其他同學可能正在編輯中：</strong></p>
                                     <p class="mb-0">${conflictInfo.activeUsers.join(', ')}</p>
                                 </div>
-                                
-                                <p>您的修改可能會與他們的工作產生衝突。</p>
-                                
-                                <div class="card mb-3">
-                                    <div class="card-header bg-info text-white">
-                                        <i class="fas fa-lightbulb"></i> 建議操作
-                                    </div>
-                                    <div class="card-body">
-                                        <ul class="list-unstyled mb-0">
-                                            <li><i class="fas fa-check text-success"></i> 在聊天室先與其他同學協商</li>
-                                            <li><i class="fas fa-check text-success"></i> 使用 AI 分析可能的衝突</li>
-                                            <li><i class="fas fa-check text-success"></i> 考慮先保存您的更改</li>
-                                        </ul>
-                                    </div>
+                                <div class="conflict-details">
+                                    <p><strong>操作類型：</strong> ${operation || '一般編輯'}</p>
+                                    <p><strong>修改範圍：</strong> ${conflictInfo.range ? `第 ${conflictInfo.range.from + 1} 到 ${conflictInfo.range.to + 1} 行` : '未知'}</p>
+                                </div>
+                                <div class="mt-3">
+                                    <p>建議操作：</p>
+                                    <ul>
+                                        <li>先與其他同學溝通確認</li>
+                                        <li>使用即時通訊功能討論修改計劃</li>
+                                        <li>考慮分段進行修改</li>
+                                    </ul>
                                 </div>
                             </div>
                             <div class="modal-footer">
-                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
-                                    <i class="fas fa-times"></i> 取消發送
-                                </button>
-                                <button type="button" class="btn btn-info" onclick="Editor.analyzeConflictWithAI()">
-                                    <i class="fas fa-robot"></i> AI 分析
-                                </button>
-                                <button type="button" class="btn btn-primary" onclick="Editor.confirmSendCode()">
-                                    <i class="fas fa-paper-plane"></i> 繼續發送
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                                <button type="button" class="btn btn-warning" id="proceedWithChanges">
+                                    <i class="fas fa-check"></i> 繼續修改
                                 </button>
                             </div>
                         </div>
@@ -791,45 +783,46 @@ class EditorManager {
             `;
             
             // 移除舊的模態框（如果存在）
-            const existingModal = document.getElementById('conflictWarningModal');
-            if (existingModal) {
-                existingModal.remove();
+            const oldModal = document.getElementById('conflictWarningModal');
+            if (oldModal) {
+                oldModal.remove();
             }
             
             // 添加新的模態框
             document.body.insertAdjacentHTML('beforeend', modalHTML);
             
+            // 獲取模態框元素
+            const modalElement = document.getElementById('conflictWarningModal');
+            const modal = new bootstrap.Modal(modalElement);
+            
+            // 添加事件監聽器
+            modalElement.querySelector('#proceedWithChanges').addEventListener('click', () => {
+                modal.hide();
+                this.sendCodeChangeToServer(code, true, operation);
+            });
+            
             // 顯示模態框
-            const modal = new bootstrap.Modal(document.getElementById('conflictWarningModal'));
             modal.show();
             
-            // 在聊天室提示用戶可以協商
-            if (window.Chat && typeof window.Chat.addSystemMessage === 'function') {
-                window.Chat.addSystemMessage(`💬 ${wsManager.currentUser} 想要修改代碼，請大家協商一下`);
-            }
             return;
         }
         
-        // 發送代碼變更消息
+        // 發送代碼變更到服務器
+        this.sendCodeChangeToServer(code, forceUpdate, operation);
+    }
+
+    // 發送代碼變更到服務器
+    sendCodeChangeToServer(code, forceUpdate = false, operation = null) {
         const message = {
             type: 'code_change',
             code: code,
-            userName: wsManager.currentUser,
-            timestamp: Date.now(),
-            hasConflictWarning: !forceUpdate && this.shouldShowConflictWarning()
+            forced: forceUpdate,
+            operation: operation,
+            version: this.codeVersion
         };
         
-        if (forceUpdate) {
-            message.forceUpdate = true;
-            console.log('🔥 強制更新標記已添加');
-        }
-        
         wsManager.sendMessage(message);
-
-        // 顯示協作提醒
-        if (this.collaboratingUsers.size > 0) {
-            UI.showCollaborationAlert(this.collaboratingUsers);
-        }
+        console.log('📤 代碼變更已發送到服務器');
     }
 
     // 確認發送代碼
@@ -968,7 +961,7 @@ class EditorManager {
     }
 
     // 檢查代碼衝突
-    checkConflicts(change) {
+    checkConflicts(change, operation = null) {
         if (!this.editor || !wsManager) return;
         
         // 獲取當前房間的用戶列表
@@ -1014,7 +1007,9 @@ class EditorManager {
             
             // 顯示衝突警告
             if (window.conflictManager) {
-                conflictManager.showConflictWarning(conflictingUsers);
+                // 傳遞操作類型和中心行號
+                const centerLine = Math.floor((from + to) / 2) + 1; // 轉換為1-based行號
+                conflictManager.showConflictWarning(conflictingUsers, operation, centerLine);
             }
         }
     }
@@ -1048,6 +1043,64 @@ class EditorManager {
             }
         }
     }
+
+    // 初始化編輯器事件
+    initializeEditorEvents() {
+        if (!this.editor) return;
+        
+        // 監聽編輯器變更
+        this.editor.on('change', (cm, change) => {
+            // 判斷操作類型
+            let operation = null;
+            
+            // 檢查是否是大量修改操作
+            if (change.origin === 'paste') {
+                operation = 'paste';
+            } else if (change.origin === 'cut') {
+                operation = 'cut';
+            } else if (change.origin === '+input' || change.origin === '+delete') {
+                // 一般的輸入或刪除操作
+                operation = null;
+            } else if (change.origin === 'setValue') {
+                operation = 'load';
+            }
+            
+            // 檢查衝突
+            this.checkConflicts(change, operation);
+            
+            // 發送代碼變更
+            this.sendCodeChange(false, operation);
+        });
+        
+        // 監聽游標移動
+        this.editor.on('cursorActivity', () => {
+            this.handleCursorActivity();
+        });
+        
+        // 監聽焦點變化
+        this.editor.on('focus', () => {
+            this.handleEditorFocus();
+        });
+        
+        this.editor.on('blur', () => {
+            this.handleEditorBlur();
+        });
+        
+        console.log('✅ 編輯器事件已初始化');
+    }
+
+    // 處理導入操作
+    handleImport(code) {
+        if (!this.editor) return;
+        
+        // 設置新代碼
+        this.editor.setValue(code);
+        
+        // 發送代碼變更（標記為導入操作）
+        this.sendCodeChange(true, 'import');
+        
+        console.log('📥 代碼導入完成');
+    }
 }
 
 // 全局編輯器管理器實例
@@ -1055,4 +1108,6 @@ const Editor = new EditorManager();
 
 // 確保全域可訪問性 - 修復WebSocket訪問問題
 window.Editor = Editor;
+console.log('✅ 全域編輯器實例已創建並設置到 window.Editor:', window.Editor); 
+console.log('✅ 全域編輯器實例已創建並設置到 window.Editor:', window.Editor); 
 console.log('✅ 全域編輯器實例已創建並設置到 window.Editor:', window.Editor); 
