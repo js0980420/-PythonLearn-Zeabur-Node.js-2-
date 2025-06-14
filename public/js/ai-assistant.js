@@ -90,43 +90,6 @@ class AIAssistantManager {
         this.initializeUI();
     }
 
-    // 初始化UI元素
-    initializeUI() {
-        // 獲取AI回應容器和分享選項
-        this.responseContainer = document.getElementById('aiResponse');
-        this.shareOptions = document.getElementById('aiShareOptions');
-        
-        console.log('🔧 [AI Debug] initializeUI - responseContainer:', this.responseContainer);
-        console.log('🔧 [AI Debug] initializeUI - shareOptions:', this.shareOptions);
-        
-        // 如果DOM元素還未準備好，設置標記但不再遞迴調用
-        if (!this.responseContainer || !this.shareOptions) {
-            console.log('⏳ [AI Debug] DOM元素未準備好，將在需要時動態獲取');
-            this.needsUIRefresh = true;
-        } else {
-            this.needsUIRefresh = false;
-            console.log('✅ [AI Debug] UI元素初始化完成');
-        }
-    }
-
-    // 動態刷新UI元素（在需要時調用）
-    refreshUIElements() {
-        if (this.needsUIRefresh || !this.responseContainer || !this.shareOptions) {
-            this.responseContainer = document.getElementById('aiResponse');
-            this.shareOptions = document.getElementById('aiShareOptions');
-            
-            if (this.responseContainer && this.shareOptions) {
-                this.needsUIRefresh = false;
-                console.log('✅ [AI Debug] UI元素動態刷新成功');
-                return true;
-            } else {
-                console.log('⚠️ [AI Debug] UI元素仍未準備好');
-                return false;
-            }
-        }
-        return true; // 元素已存在
-    }
-
     // 初始化AI助教
     initialize() {
         if (!this.responseContainer) {
@@ -404,11 +367,7 @@ class AIAssistantManager {
 
     // 顯示AI回應
     showResponse(content) {
-        // 動態刷新UI元素
-        if (!this.refreshUIElements()) {
-            console.error('❌ UI元素無法載入，showResponse 失敗');
-            return;
-        }
+        if (!this.responseContainer) return;
         
         this.currentResponse = content;
         this.responseContainer.innerHTML = `
@@ -819,9 +778,6 @@ class AIAssistantManager {
 
     // 隱藏分享選項
     hideShareOptions() {
-        // 動態刷新UI元素
-        this.refreshUIElements();
-        
         if (this.shareOptions) {
             this.shareOptions.style.display = 'none';
         }
@@ -953,56 +909,13 @@ class AIAssistantManager {
 }
 
 // 創建全域AI助教實例
-let AIAssistant;
-
-// 確保在 DOM 準備好之後初始化，並添加多重檢查
-function initializeAIAssistant() {
-    try {
-        if (AIAssistant) {
-            console.log('🔍 AIAssistant 已經初始化，跳過重複初始化');
-            return;
-        }
-        
-        AIAssistant = new AIAssistantManager();
+const AIAssistant = new AIAssistantManager();
 
 // 同時設置為window全域變數，確保在任何地方都能存取
 window.AIAssistant = AIAssistant;
 
 console.log('🔧 AI助教管理器已創建');
 console.log('✅ 全域 AIAssistant 實例已創建並設置到 window:', AIAssistant);
-        
-        // 觸發一個自定義事件，通知其他模組 AIAssistant 已準備好
-        window.dispatchEvent(new CustomEvent('AIAssistantReady', { detail: AIAssistant }));
-    } catch (error) {
-        console.error('❌ AIAssistant 初始化失敗:', error);
-    }
-}
-
-// 智能初始化 - 多種方式確保正確初始化
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
-        initializeAIAssistant();
-    });
-} else {
-    // DOM已經準備好，立即初始化
-    initializeAIAssistant();
-}
-
-// 備用初始化 - 如果上面的方法失敗，在window load事件時再試一次
-window.addEventListener('load', function() {
-    if (!window.AIAssistant) {
-        console.log('🔄 備用初始化 AIAssistant...');
-        initializeAIAssistant();
-    }
-});
-
-// 額外的安全檢查 - 延遲初始化
-setTimeout(() => {
-    if (!window.AIAssistant) {
-        console.log('🔄 延遲初始化 AIAssistant...');
-        initializeAIAssistant();
-    }
-}, 1000);
 
 // 全域函數供HTML調用
 function askAI(action) {
@@ -1024,72 +937,17 @@ function showShareOptions() {
 // 新增：顯示AI助教介紹
 function showAIIntro() {
     AIAssistant.showAIIntroduction();
-} 
+}
 
 // 全域函數（與HTML中的按鈕onclick事件對應）
 function globalAskAI(action) {
-    console.log('🔍 globalAskAI 調用，action:', action);
-    console.log('🔍 window.AIAssistant 狀態:', !!window.AIAssistant);
-    console.log('🔍 AIAssistant 變數狀態:', !!AIAssistant);
-    
-    // 優先使用全域變數，其次使用window屬性
-    const assistant = AIAssistant || window.AIAssistant;
-    
-    if (assistant && typeof assistant.requestAnalysis === 'function') {
-        console.log('✅ AIAssistant 可用，開始分析');
-        assistant.requestAnalysis(action);
-        return;
-    }
-    
-    console.warn("⚠️ AIAssistant 尚未初始化，嘗試重新初始化...");
-    
-    // 立即嘗試初始化
-    try {
-        initializeAIAssistant();
-        
-        // 檢查初始化是否成功
-        const newAssistant = AIAssistant || window.AIAssistant;
-        if (newAssistant && typeof newAssistant.requestAnalysis === 'function') {
-            console.log('✅ 重新初始化成功，開始分析');
-            newAssistant.requestAnalysis(action);
-            return;
+    if (window.AIAssistant) {
+        window.AIAssistant.requestAnalysis(action);
+    } else {
+        console.error("AIAssistant 尚未初始化");
+        if (typeof showToast === 'function') {
+            showToast('AI助教尚未載入完成，請稍後再試', 'warning');
         }
-    } catch (error) {
-        console.error('❌ 重新初始化失敗:', error);
-    }
-    
-    // 如果初始化失敗，等待事件
-    console.log('⏳ 等待 AIAssistant 初始化事件...');
-    
-    // 監聽 AIAssistant 準備好的事件
-    window.addEventListener('AIAssistantReady', function(event) {
-        console.log('✅ AIAssistant 準備完成，重試分析');
-        if (event.detail && typeof event.detail.requestAnalysis === 'function') {
-            event.detail.requestAnalysis(action);
-        }
-    }, { once: true });
-    
-    // 強制重新初始化
-    setTimeout(() => {
-        initializeAIAssistant();
-    }, 100);
-    
-    // 設置超時，如果 5 秒內還沒準備好就顯示錯誤
-    setTimeout(() => {
-        const finalAssistant = AIAssistant || window.AIAssistant;
-        if (!finalAssistant) {
-            console.error('❌ AI助教初始化最終失敗');
-            if (typeof UI !== 'undefined' && UI.showErrorToast) {
-                UI.showErrorToast('AI助教初始化超時，請重新整理頁面再試');
-            } else {
-                alert('AI助教初始化超時，請重新整理頁面再試');
-            }
-        }
-    }, 5000);
-    
-    // 顯示加載提示
-    if (typeof UI !== 'undefined' && UI.showInfoToast) {
-        UI.showInfoToast('AI助教正在載入中，請稍等...');
     }
 }
 
@@ -1109,40 +967,7 @@ function globalHideShareOptions() {
     }
 }
 
-// 新增：衝突分析測試函數
-function globalTestConflictAnalysis() {
-    if (window.AIAssistant) {
-        // 顯示衝突分析說明
-        const conflictInfo = `
-            <div class="alert alert-info">
-                <h6><i class="fas fa-code-branch"></i> 協作衝突分析工具</h6>
-                <p><strong>🔧 功能說明：</strong></p>
-                <ul>
-                    <li><strong>即時檢測</strong>：當多人同時編輯相同代碼時，系統會自動檢測衝突</li>
-                    <li><strong>智能分析</strong>：AI 會分析衝突的原因並提供解決建議</li>
-                    <li><strong>差異顯示</strong>：清楚顯示不同用戶之間的代碼差異</li>
-                    <li><strong>協作指導</strong>：提供最佳的協作衝突解決方案</li>
-                </ul>
-                <p><strong>💡 使用方法：</strong></p>
-                <ol>
-                    <li>當發生真實衝突時，系統會自動彈出衝突處理界面</li>
-                    <li>點擊「請AI協助分析」按鈕，獲得專業建議</li>
-                    <li>根據AI建議選擇適當的解決方案</li>
-                </ol>
-                <p class="mb-0"><strong>🤝 協作小貼士：</strong>在多人協作時，建議先溝通再修改，避免不必要的衝突。</p>
-            </div>
-        `;
-        window.AIAssistant.showResponse(conflictInfo);
-    } else {
-        console.error("AIAssistant 尚未初始化");
-        if (typeof showToast === 'function') {
-            showToast('AI助教尚未載入完成，請稍後再試', 'warning');
-        }
-    }
-}
-
 // 將全域函數也設置到window物件
 window.globalAskAI = globalAskAI;
 window.globalShareAIResponse = globalShareAIResponse;
-window.globalHideShareOptions = globalHideShareOptions;
-window.globalTestConflictAnalysis = globalTestConflictAnalysis; 
+window.globalHideShareOptions = globalHideShareOptions; 

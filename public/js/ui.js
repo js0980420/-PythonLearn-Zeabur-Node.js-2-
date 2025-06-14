@@ -3,12 +3,6 @@ class UIManager {
     constructor() {
         this.currentTab = 'ai'; // 'ai' 或 'chat'
         this.collaborationAlert = null;
-        this.onlineUsers = new Map(); // 用於存儲在線用戶
-        
-        // 確保在建構時初始化全局實例
-        if (!window.UI) {
-            window.UI = this;
-        }
     }
 
     // 初始化界面功能
@@ -57,17 +51,6 @@ class UIManager {
         if (currentUserNameEl) {
             currentUserNameEl.textContent = userName;
         }
-        
-        // 🎯 新用戶加入房間後自動顯示操作教學
-        setTimeout(() => {
-            try {
-                console.log('🎯 準備顯示操作教學...');
-                this.showTutorial();
-                console.log('✅ 操作教學顯示完成');
-            } catch (error) {
-                console.error('❌ 顯示操作教學時發生錯誤:', error);
-            }
-        }, 2000); // 延遲2秒確保所有模組都已載入
     }
 
     // 離開房間
@@ -139,32 +122,18 @@ class UIManager {
             return;
         }
         
-        // 更新內部存儲
-        this.onlineUsers.clear();
-        if (users && Array.isArray(users)) {
-            users.forEach(user => {
-                const userId = user.id || user.userId;
-                this.onlineUsers.set(userId, user);
-            });
-        }
+        // 添加調試日誌
+        console.log('🔍 updateOnlineUsers 被調用，用戶數據:', users);
+        console.log('🔍 用戶數量:', users ? users.length : 'undefined');
         
-        // 更新 UI 顯示
         container.innerHTML = '<strong>在線用戶:</strong> ';
         
-        if (this.onlineUsers.size > 0) {
-            Array.from(this.onlineUsers.values()).forEach((user, index) => {
-                if (index > 0) {
-                    container.appendChild(document.createTextNode(', '));
-                }
+        if (users && users.length > 0) {
+            users.forEach((user, index) => {
+                console.log(`🔍 處理用戶 ${index}:`, user);
                 const span = document.createElement('span');
                 span.className = 'user-indicator';
                 span.textContent = user.userName || user.name || '未知用戶';
-                
-                // 如果是當前用戶，添加特殊樣式
-                if (user.userName === window.wsManager.currentUser) {
-                    span.classList.add('current-user');
-                }
-                
                 container.appendChild(span);
             });
         } else {
@@ -173,24 +142,6 @@ class UIManager {
             span.textContent = '無在線用戶';
             container.appendChild(span);
         }
-    }
-
-    // 獲取在線用戶列表
-    getOnlineUsers() {
-        return Array.from(this.onlineUsers.values());
-    }
-
-    // 添加在線用戶
-    addOnlineUser(user) {
-        const userId = user.id || user.userId;
-        this.onlineUsers.set(userId, user);
-        this.updateOnlineUsers(Array.from(this.onlineUsers.values()));
-    }
-
-    // 移除在線用戶
-    removeOnlineUser(userId) {
-        this.onlineUsers.delete(userId);
-        this.updateOnlineUsers(Array.from(this.onlineUsers.values()));
     }
 
     // 切換到AI助教
@@ -492,13 +443,8 @@ class UIManager {
     }
 }
 
-// 確保在頁面載入時初始化 UI 管理器
-document.addEventListener('DOMContentLoaded', () => {
-    // 如果還沒有初始化，則創建新實例
-    if (!window.UI) {
-        window.UI = new UIManager();
-    }
-});
+// 全局UI管理器實例
+const UI = new UIManager();
 
 // 全局函數供HTML調用
 function joinRoom() {

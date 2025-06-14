@@ -1,92 +1,3 @@
-// 全局聊天系統對象
-window.Chat = {
-    // 基本屬性
-    chatContainer: null,
-    chatInput: null,
-    initialized: false,
-    
-    // 初始化聊天系統
-    initialize() {
-        console.log('🚀 初始化聊天系統...');
-        
-        // 獲取必要的DOM元素
-        this.chatContainer = document.getElementById('chatContainer');
-        this.chatInput = document.getElementById('chatInput');
-        
-        if (this.chatContainer && this.chatInput) {
-            // 設置Enter鍵發送
-            this.chatInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    this.sendMessage();
-                }
-            });
-            
-            this.initialized = true;
-            console.log('✅ 聊天系統初始化完成');
-        } else {
-            console.error('❌ 找不到聊天元素');
-        }
-    },
-    
-    // 發送消息
-    sendMessage() {
-        if (!this.initialized) {
-            console.error('❌ 聊天系統未初始化');
-            return;
-        }
-        
-        const message = this.chatInput.value.trim();
-        if (!message) return;
-        
-        console.log(`💬 發送聊天消息: "${message}"`);
-        
-        // 發送到WebSocket
-        if (window.wsManager && window.wsManager.isConnected()) {
-            window.wsManager.sendMessage({
-                type: 'chat_message',
-                message: message
-            });
-            
-            // 清空輸入框
-            this.chatInput.value = '';
-            console.log('✅ 聊天消息已發送');
-        } else {
-            console.error('❌ WebSocket未連接');
-        }
-    },
-    
-    // 添加消息到聊天窗口
-    addMessage(userName, message, isSystem = false) {
-        if (!this.initialized) {
-            console.error('❌ 聊天系統未初始化');
-            return;
-        }
-        
-        const messageDiv = document.createElement('div');
-        messageDiv.className = 'chat-message';
-        
-        if (isSystem) {
-            messageDiv.innerHTML = `<div class="system-message">${message}</div>`;
-        } else {
-            messageDiv.innerHTML = `<strong>${userName}:</strong> ${message}`;
-        }
-        
-        this.chatContainer.appendChild(messageDiv);
-        this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
-    },
-    
-    // 添加系統消息
-    addSystemMessage(message) {
-        this.addMessage(null, message, true);
-    }
-};
-
-// 頁面加載完成後初始化
-document.addEventListener('DOMContentLoaded', () => {
-    window.Chat.initialize();
-});
-
 // 聊天功能管理
 class ChatManager {
     constructor() {
@@ -173,32 +84,22 @@ class ChatManager {
         
         console.log('✅ 找到聊天元素，開始設置...');
         
-        try {
-            // 動態設置聊天室樣式
-            this.setupChatStyles();
-            
-            // 設置Enter鍵發送
-            this.chatInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    this.sendMessage();
-                }
-            });
-            
-            // 添加歡迎消息
-            this.addSystemMessage('聊天室已準備就緒！可以開始對話了 💬');
-            
-            // 確保所有必要的元素和事件都已設置完成
-            if (this.chatContainer && this.chatInput && 
-                document.getElementById('chatSection')) {
-                this.initialized = true;
-                console.log('✅ 聊天模組初始化完成');
-            } else {
-                console.warn('⚠️ 聊天模組初始化未完全完成，部分元素缺失');
+        // 動態設置聊天室樣式
+        this.setupChatStyles();
+        
+        // 設置Enter鍵發送
+        this.chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.sendMessage();
             }
-        } catch (error) {
-            console.error('❌ 聊天模組初始化過程中發生錯誤:', error);
-        }
+        });
+        
+        // 添加歡迎消息
+        this.addSystemMessage('聊天室已準備就緒！可以開始對話了 💬');
+        
+        this.initialized = true;
+        console.log('✅ 聊天模組初始化完成');
     }
 
     // 動態設置聊天室樣式
@@ -509,6 +410,15 @@ class ChatManager {
         }
     }
 }
+
+// 全局聊天管理器實例
+const Chat = new ChatManager();
+
+// 同時設置為window全域變數，確保在任何地方都能存取
+window.Chat = Chat;
+
+console.log('🔧 聊天管理器已創建');
+console.log('✅ 全域 Chat 實例已創建並設置到 window.Chat:', Chat);
 
 // 全局函數供HTML調用
 function sendChat() {

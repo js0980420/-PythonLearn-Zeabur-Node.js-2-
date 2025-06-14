@@ -402,50 +402,6 @@ class ConflictResolverManager {
         }
     }
 
-    // 🆕 隱藏衝突模態框
-    hideConflictModal() {
-        console.log('🔧 [ConflictResolver] 隱藏衝突模態框');
-        
-        try {
-            // 優先使用 Bootstrap Modal API
-            if (this.modal && typeof this.modal.hide === 'function') {
-                this.modal.hide();
-                console.log('✅ 使用 Bootstrap Modal API 隱藏模態框');
-                return;
-            }
-            
-            // 回退到直接操作 DOM
-            if (this.modalElement) {
-                // 移除 Bootstrap 類別和樣式
-                this.modalElement.style.display = 'none';
-                this.modalElement.classList.remove('show');
-                document.body.classList.remove('modal-open');
-                
-                // 移除背景遮罩
-                const backdrop = document.querySelector('.modal-backdrop');
-                if (backdrop) {
-                    backdrop.remove();
-                }
-                
-                console.log('✅ 手動隱藏模態框');
-            } else {
-                console.warn('⚠️ 無法找到模態框元素');
-            }
-        } catch (error) {
-            console.error('❌ 隱藏模態框失敗:', error);
-            
-            // 最後的回退方案
-            const modal = document.getElementById('conflictModal');
-            if (modal) {
-                modal.style.display = 'none';
-                modal.classList.remove('show');
-                document.body.classList.remove('modal-open');
-                const backdrop = document.querySelector('.modal-backdrop');
-                if (backdrop) backdrop.remove();
-            }
-        }
-    }
-
     // 🆕 解決衝突 - 新增歷史記錄
     resolveConflict(choice) {
         console.log('✅ [ConflictResolver] 用戶選擇解決方案:', choice);
@@ -458,79 +414,29 @@ class ConflictResolverManager {
         const conflictData = this.currentConflict;
         let resolution;
         
-        // 根據用戶選擇設置解決方案
-        switch (choice) {
-            case 'accept':
+        if (choice === 'accept') {
             // 接受對方修改
             Editor.applyRemoteCode(conflictData.serverCode, conflictData.serverVersion);
             console.log('✅ 選擇接受對方修改解決衝突');
             resolution = 'accepted';
-                break;
-            case 'reject':
+        } else if (choice === 'reject') {
             // 拒絕對方修改，保持自己的版本
             console.log('✅ 選擇拒絕對方修改解決衝突');
             resolution = 'rejected';
-                break;
-            case 'discuss':
-                console.log('✅ 選擇討論解決衝突');
-                resolution = 'discussed';
-                // 打開聊天室進行討論
-                this.openChatForDiscussion();
-                break;
-            case 'force':
-                console.log('✅ 選擇強制覆蓋解決衝突');
-                resolution = 'forced';
-                // 強制使用自己的代碼（保持當前狀態）
-                console.log('💪 保持本地代碼，強制覆蓋遠程修改');
-                break;
-            case 'reload':
-                console.log('✅ 選擇重新載入解決衝突');
-                resolution = 'reloaded';
-                // 重新載入頁面
-                location.reload();
-                break;
-            default:
-                console.warn('⚠️ 未知的衝突解決選項:', choice);
-                resolution = 'unknown';
-                break;
         }
         
         // 🆕 記錄衝突歷史
-        try {
         if (this.lastAIAnalysis) {
-                this.addConflictRecord(conflictData, resolution, this.lastAIAnalysis);
+            conflictHistoryManager.addConflictRecord(conflictData, resolution, this.lastAIAnalysis);
         } else {
-                this.addConflictRecord(conflictData, resolution);
-            }
-        } catch (error) {
-            console.warn('⚠️ 衝突歷史記錄失敗:', error);
+            conflictHistoryManager.addConflictRecord(conflictData, resolution);
         }
         
         // 關閉模態框
         this.hideConflictModal();
         
         // 通知成功
-        let message;
-        switch (choice) {
-            case 'accept':
-                message = '已接受對方修改';
-                break;
-            case 'reject':
-                message = '已拒絕對方修改，保持我的版本';
-                break;
-            case 'discuss':
-                message = '已選擇討論解決衝突';
-                break;
-            case 'force':
-                message = '已強制保持本地代碼';
-                break;
-            case 'reload':
-                message = '正在重新載入頁面';
-                break;
-            default:
-                message = '衝突處理完成';
-                break;
-        }
+        const message = choice === 'accept' ? '已接受對方修改' : '已拒絕對方修改，保持我的版本';
         
         if (window.showToast) {
             window.showToast(message, 'success');
@@ -627,14 +533,15 @@ class ConflictResolverManager {
             return;
         }
         
-        // 準備發送給AI的數據 - 修正為服務器期望的格式
+        // 準備發送給AI的數據
         const analysisData = {
+            action: 'conflict_analysis',
             userCode: userCode,
-            serverCode: serverCode, // 服務器端期望這個字段名
+            conflictCode: serverCode,
             userName: wsManager.currentUser || 'Unknown',
             conflictUser: conflictUser,
-            userVersion: conflictInfo.localVersion || conflictInfo.userVersion || 0,
-            serverVersion: conflictInfo.remoteVersion || conflictInfo.serverVersion || 0,
+            version: conflictInfo.localVersion || conflictInfo.userVersion || 0,
+            conflictVersion: conflictInfo.remoteVersion || conflictInfo.serverVersion || 0,
             roomId: wsManager.currentRoom || 'unknown'
         };
 
@@ -758,7 +665,39 @@ class ConflictResolverManager {
         return formatted;
     }
 
-    // 📱 顯示AI分析結果在UI中 (移除重複方法，保留完整版本)
+    // 📱 顯示AI分析結果在UI中
+    displayAIAnalysis(analysisText, target = 'conflict') {
+        console.log('🤖 顯示AI分析結果:', analysisText.substring(0, 100) + '...');
+        
+        const formatted = this.formatAIAnalysisForUI(analysisText);
+        
+        if (target === 'conflict') {
+            // 顯示在衝突解決模態框中
+            const aiAnalysisDiv = document.getElementById('conflictAIAnalysis');
+            const aiContentDiv = document.getElementById('aiAnalysisContent');
+            
+            if (aiAnalysisDiv && aiContentDiv) {
+                aiContentDiv.innerHTML = formatted;
+                aiAnalysisDiv.style.display = 'block';
+                
+                // 添加分享按鈕
+                const shareBtn = document.createElement('button');
+                shareBtn.className = 'btn btn-sm btn-outline-primary mt-2';
+                shareBtn.innerHTML = '<i class="fas fa-share"></i> 分享到聊天室';
+                shareBtn.onclick = () => this.shareAIAnalysis(analysisText);
+                
+                // 如果還沒有分享按鈕，就添加一個
+                if (!aiContentDiv.querySelector('.btn-outline-primary')) {
+                    aiContentDiv.appendChild(shareBtn);
+                }
+            }
+        } else {
+            // 顯示在AI助教面板中
+            if (window.aiAssistant && window.aiAssistant.displayResponse) {
+                window.aiAssistant.displayResponse(formatted);
+            }
+        }
+    }
 
     // 🆕 分享AI分析結果到聊天室
     shareAIAnalysis(analysisResult) {
@@ -841,21 +780,11 @@ class ConflictResolverManager {
         }
         
         // 執行差異分析
-        try {
         const analysis = this.performLocalDiffAnalysis(myCode, otherCode);
         
-            if (diffSummaryElement && analysis) {
-                // 使用正確的屬性名稱
-                const summaryText = `差異: +${analysis.addedLines || 0} 新增, -${analysis.removedLines || 0} 刪除, ~${analysis.modifiedLines || 0} 修改`;
+        if (diffSummaryElement) {
+            const summaryText = `差異: +${analysis.added.length} 新增, -${analysis.removed.length} 刪除, ~${analysis.modified.length} 修改`;
             diffSummaryElement.textContent = summaryText;
-            } else if (diffSummaryElement) {
-                diffSummaryElement.textContent = '差異分析失敗';
-            }
-        } catch (error) {
-            console.error('❌ 差異分析失敗:', error);
-            if (diffSummaryElement) {
-                diffSummaryElement.textContent = '差異分析錯誤';
-            }
         }
         
         console.log('✅ 主改方等待界面的代碼差異顯示完成');
@@ -956,37 +885,11 @@ class ConflictResolverManager {
         // 關閉等待模態框
         this.dismissSenderWaiting();
         
-        // 獲取當前衝突數據
-        const conflictData = this.currentConflict;
-        if (!conflictData) {
-            console.error('❌ 無法打開聊天室討論：沒有當前衝突數據');
-            return;
-        }
-
-        const myCode = conflictData.localCode || '';
-        const otherCode = conflictData.remoteCode || '';
-        const otherUserName = conflictData.remoteUserName || '其他同學';
-
-        // 執行本地差異分析
-        const analysis = this.performLocalDiffAnalysis(myCode, otherCode);
-
-        let diffSummary = '無明顯差異';
-        if (analysis) {
-            const added = analysis.addedLines || 0;
-            const removed = analysis.removedLines || 0;
-            const modified = analysis.modifiedLines || 0;
-            diffSummary = `差異摘要：新增 ${added} 行，刪除 ${removed} 行，修改 ${modified} 行`;
-        }
-
-        // 在聊天室發送詳細的衝突信息
+        // 在聊天室發送預設信息
         if (window.Chat && typeof window.Chat.addChatMessage === 'function') {
             window.Chat.addChatMessage(
-                `💬 我們來討論一下代碼衝突的解決方案吧！`,
+                '💬 我們來討論一下代碼衝突的解決方案吧',
                 wsManager.currentUser
-            );
-            window.Chat.addChatMessage(
-                `--- 您的代碼 ---\\n\`\`\`python\\n${myCode}\\n\`\`\`\\n\\n--- ${otherUserName} 的代碼 ---\\n\`\`\`python\\n${otherCode}\\n\`\`\`\\n\\n${diffSummary}`,
-                '系統' // 作為系統消息發送
             );
         }
         
@@ -996,7 +899,7 @@ class ConflictResolverManager {
             chatContainer.scrollIntoView({ behavior: 'smooth' });
         }
         
-        console.log('✅ 已打開聊天室並發送衝突討論信息');
+        console.log('✅ 已打開聊天室進行衝突討論');
     }
 
     // 🆕 添加衝突分析測試功能和歷史記錄
@@ -1161,35 +1064,6 @@ class ConflictResolverManager {
             }
         }
     }
-
-    // 🆕 添加衝突記錄到歷史
-    addConflictRecord(conflictData, resolution, aiAnalysis = null) {
-        console.log('📝 添加衝突記錄到歷史:', { resolution, hasAI: !!aiAnalysis });
-        
-        let conflictHistory = JSON.parse(localStorage.getItem('conflict_history') || '[]');
-        
-        const historyEntry = {
-            id: Date.now(),
-            timestamp: new Date().toISOString(),
-            userCode: conflictData.localCode || conflictData.userCode || '',
-            serverCode: conflictData.remoteCode || conflictData.serverCode || '',
-            conflictUser: conflictData.remoteUserName || conflictData.conflictUser || '未知用戶',
-            roomId: conflictData.roomId || wsManager?.currentRoom || 'unknown',
-            resolution: resolution,
-            aiAnalysis: aiAnalysis,
-            resolved: true
-        };
-        
-        conflictHistory.unshift(historyEntry); // 新的在前
-        
-        // 限制歷史記錄數量
-        if (conflictHistory.length > 20) {
-            conflictHistory = conflictHistory.slice(0, 20);
-        }
-        
-        localStorage.setItem('conflict_history', JSON.stringify(conflictHistory));
-        console.log('✅ 衝突記錄已添加到歷史，總記錄數:', conflictHistory.length);
-    }
 }
 
 // 全局衝突解決器實例
@@ -1203,11 +1077,11 @@ function resolveConflict(solution) {
 
 function askAIForConflictHelp() {
     if (ConflictResolver) {
-    ConflictResolver.requestAIAnalysis();
+        ConflictResolver.requestAIAnalysis();
     } else {
         console.error('ConflictResolver not available');
     }
-} 
+}
 
 // 全域函數（與HTML中的按鈕onclick事件對應）
 function globalAskAIForConflictHelp() {
