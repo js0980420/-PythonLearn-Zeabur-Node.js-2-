@@ -259,6 +259,25 @@ class WebSocketManager {
         } else {
             this.updateUserList(message.users);
         }
+
+        // 更新編輯器代碼
+        if (window.Editor && typeof window.Editor.setCode === 'function') {
+            console.log('📝 設置初始代碼:', message.code);
+            window.Editor.setCode(message.code || '', message.version || 0);
+        } else {
+            console.warn('⚠️ 編輯器未就緒，無法設置初始代碼');
+        }
+
+        // 初始化 SaveLoadManager
+        if (window.SaveLoadManager) {
+            console.log('💾 初始化 SaveLoadManager...');
+            window.SaveLoadManager.init({
+                name: message.userName,
+                id: message.userId
+            }, message.roomId);
+        } else {
+            console.warn('⚠️ SaveLoadManager 未找到');
+        }
         
         // 如果是重連，顯示重連成功消息
         if (message.isReconnect && window.UI) {
