@@ -382,41 +382,17 @@ class WebSocketManager {
                     console.log('🔄 降級處理：直接設置代碼');
                     
                     const editor = window.Editor.editor;
-                    const currentPosition = editor.getCursor();
-                    const currentSelection = editor.getSelection();
-                    const currentContent = editor.getValue();
                     
-                    // 更新代碼
+                    // 更新代碼，但不改變游標位置
+                    const prevScrollInfo = editor.getScrollInfo();
                     editor.setValue(message.code || '');
+                    editor.scrollTo(prevScrollInfo.left, prevScrollInfo.top);
                     
                     // 更新版本號
                     if (message.version !== undefined) {
                         window.Editor.codeVersion = message.version;
                         if (typeof window.Editor.updateVersionDisplay === 'function') {
                             window.Editor.updateVersionDisplay();
-                        }
-                    }
-                    
-                    // 只在代碼內容實際變化時才考慮恢復游標位置
-                    if (message.userName !== this.currentUser && currentContent !== message.code) {
-                        // 確保游標位置在有效範圍內
-                        const totalLines = editor.lineCount();
-                        if (currentPosition.line < totalLines) {
-                            const lineContent = editor.getLine(currentPosition.line);
-                            const maxColumn = lineContent ? lineContent.length : 0;
-                            
-                            // 只在游標位置有效時才設置
-                            if (currentPosition.ch <= maxColumn) {
-                                editor.setCursor(currentPosition);
-                            }
-                            
-                            // 只在選擇範圍有效時才恢復
-                            if (currentSelection && currentSelection.length > 0) {
-                                const selectionValid = editor.getLine(currentSelection.head.line) !== undefined;
-                                if (selectionValid) {
-                                    editor.setSelection(currentSelection.anchor, currentSelection.head);
-                                }
-                            }
                         }
                     }
                 } else {

@@ -33,6 +33,10 @@ class EditorManager {
             autoCloseBrackets: true,
             matchBrackets: true,
             lineWrapping: true,
+            // 禁用所有自動游標相關設置
+            autofocus: false,
+            cursorBlinkRate: 530,
+            resetSelectionOnContextMenu: false,
             extraKeys: {
                 "Ctrl-S": (cm) => {
                     this.saveCode();
@@ -68,7 +72,7 @@ class EditorManager {
         // 載入歷史記錄
         this.loadHistoryFromStorage();
 
-        // 移除自動聚焦，改為只刷新編輯器
+        // 只刷新編輯器，不設置焦點和游標位置
         setTimeout(() => {
             if (this.editor) {
                 this.editor.refresh();
