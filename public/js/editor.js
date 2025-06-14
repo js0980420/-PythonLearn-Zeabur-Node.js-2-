@@ -358,17 +358,25 @@ class EditorManager {
 
             // 安全地獲取當前游標位置
             try {
-                currentPosition = {
-                    row: this.editor.getCursorPosition().row,
-                    column: this.editor.getCursorPosition().column
-                };
+                currentPosition = this.editor.selection.getCursor();
                 currentSelection = this.editor.getSelection().getRange();
             } catch (e) {
                 console.warn('無法獲取游標位置:', e);
             }
             
-            // 更新代碼
-            this.editor.setValue(message.code || '', -1); // -1 表示將游標移到開頭
+            // 暫時禁用 onChange 事件處理
+            const prevOnChange = this.editor.session.getDocument().on.change;
+            this.editor.session.getDocument().on.change = null;
+
+            // 更新代碼但保持游標位置
+            const prevScrollTop = this.editor.session.getScrollTop();
+            const content = message.code || '';
+            
+            // 使用 session.setValue 而不是 editor.setValue 來避免選擇整個文檔
+            this.editor.session.setValue(content);
+            
+            // 恢復 onChange 事件處理
+            this.editor.session.getDocument().on.change = prevOnChange;
             
             // 更新版本號
             if (message.version !== undefined) {
@@ -383,15 +391,21 @@ class EditorManager {
                     const lines = this.editor.session.getLength();
                     if (currentPosition.row < lines) {
                         const lineLength = this.editor.session.getLine(currentPosition.row).length;
-                        this.editor.moveCursorTo(
-                            currentPosition.row,
-                            Math.min(currentPosition.column, lineLength)
-                        );
+                        const targetColumn = Math.min(currentPosition.column, lineLength);
+                        
+                        // 恢復游標位置
+                        this.editor.selection.moveCursorTo(currentPosition.row, targetColumn);
                         
                         // 如果有選擇範圍，也恢復它
                         if (currentSelection && !currentSelection.isEmpty()) {
-                            this.editor.getSelection().setRange(currentSelection);
+                            this.editor.selection.setRange(currentSelection);
+                        } else {
+                            // 清除選擇範圍，只保留游標位置
+                            this.editor.clearSelection();
                         }
+                        
+                        // 恢復滾動位置
+                        this.editor.session.setScrollTop(prevScrollTop);
                     }
                 } catch (e) {
                     console.warn('無法恢復游標位置:', e);
