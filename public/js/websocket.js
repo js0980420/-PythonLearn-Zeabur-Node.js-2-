@@ -462,22 +462,31 @@ class WebSocketManager {
             // 檢查是否在教師監控頁面
             const isTeacherMonitor = window.location.pathname.includes('/teacher');
             
+            // 解構消息對象，確保格式正確
+            const { userName, roomName, message: chatText, isTeacher } = message;
+            
             if (isTeacherMonitor) {
                 // 教師監控頁面的聊天處理
                 if (window.TeacherChat && typeof window.TeacherChat.addMessage === 'function') {
-                    window.TeacherChat.addMessage(message);
+                    window.TeacherChat.addMessage(userName, chatText, false, isTeacher, roomName);
                 } else {
                     console.warn('⚠️ 教師聊天室組件未就緒');
                     // 嘗試將消息添加到等待隊列
                     if (!window.pendingTeacherMessages) {
                         window.pendingTeacherMessages = [];
                     }
-                    window.pendingTeacherMessages.push(message);
+                    window.pendingTeacherMessages.push({
+                        userName,
+                        message: chatText,
+                        isSystem: false,
+                        isTeacher,
+                        roomName
+                    });
                 }
             } else {
                 // 學生頁面的聊天處理
                 if (window.Chat && typeof window.Chat.addMessage === 'function') {
-                    window.Chat.addMessage(message);
+                    window.Chat.addMessage(userName, chatText, false, isTeacher, roomName);
                 } else {
                     console.warn('⚠️ 聊天室組件未就緒');
                 }
@@ -490,6 +499,7 @@ class WebSocketManager {
             
         } catch (error) {
             console.error('❌ 處理聊天消息時發生錯誤:', error);
+            console.log('消息內容:', message);
         }
     }
 
@@ -501,25 +511,29 @@ class WebSocketManager {
             // 檢查是否在教師監控頁面
             const isTeacherMonitor = window.location.pathname.includes('/teacher');
             
+            // 解構消息對象
+            const { content, roomName } = message;
+            
             if (isTeacherMonitor) {
                 // 教師監控頁面的系統消息處理
                 if (window.TeacherChat && typeof window.TeacherChat.addSystemMessage === 'function') {
-                    window.TeacherChat.addSystemMessage(message);
+                    window.TeacherChat.addSystemMessage(content, roomName);
                 }
             } else {
                 // 學生頁面的系統消息處理
                 if (window.Chat && typeof window.Chat.addSystemMessage === 'function') {
-                    window.Chat.addSystemMessage(message);
+                    window.Chat.addSystemMessage(content);
                 }
             }
             
             // 顯示系統通知
             if (window.UI && typeof window.UI.showSystemNotification === 'function') {
-                window.UI.showSystemNotification(message.content);
+                window.UI.showSystemNotification(content);
             }
             
         } catch (error) {
             console.error('❌ 處理系統消息時發生錯誤:', error);
+            console.log('系統消息內容:', message);
         }
     }
 
