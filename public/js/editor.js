@@ -351,8 +351,8 @@ class EditorManager {
             // 直接設置編輯器的值
             if (this.editor) {
                 // 保存當前游標位置和選擇範圍
-                const currentPosition = this.editor.getCursorPosition();
-                const currentSelection = this.editor.getSelection();
+                const currentCursor = this.editor.selection.getCursor();
+                const currentSelection = this.editor.selection.getRange();
                 
                 // 更新代碼
                 this.editor.setValue(message.code || '');
@@ -367,10 +367,10 @@ class EditorManager {
                 if (message.userName !== wsManager.currentUser) {
                     // 確保游標位置在有效範圍內
                     const lines = this.editor.session.getLength();
-                    if (currentPosition.row < lines) {
-                        this.editor.moveCursorTo(
-                            currentPosition.row,
-                            Math.min(currentPosition.column, this.editor.session.getLine(currentPosition.row).length)
+                    if (currentCursor.row < lines) {
+                        this.editor.selection.moveTo(
+                            currentCursor.row,
+                            Math.min(currentCursor.column, this.editor.session.getLine(currentCursor.row).length)
                         );
                         
                         // 如果有選擇範圍，也恢復它
@@ -390,7 +390,11 @@ class EditorManager {
                 window.UI.showInfoToast(`${message.userName} 更新了代碼`);
             }
         } catch (error) {
-            console.error('❌ 更新代碼時發生錯誤:', error);
+            console.error('❌ 處理遠程代碼變更時發生錯誤:', error);
+            // 顯示錯誤提示
+            if (window.UI && typeof window.UI.showErrorToast === 'function') {
+                window.UI.showErrorToast('更新代碼時發生錯誤，請重新整理頁面');
+            }
         }
     }
 
