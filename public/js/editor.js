@@ -611,8 +611,16 @@ class EditorManager {
                 const cursor = this.editor.getCursor();
                 const scroll = this.editor.getScrollInfo();
                 
-                // 使用 setValue 更新內容，但不觸發 change 事件
-                this.editor.setValue(code || '');
+                // 獲取當前內容範圍
+                const lastLine = this.editor.lastLine();
+                const lastCh = this.editor.getLine(lastLine).length;
+                
+                // 使用 replaceRange 更新內容
+                this.editor.replaceRange(
+                    code || '',
+                    {line: 0, ch: 0},
+                    {line: lastLine, ch: lastCh}
+                );
                 
                 // 立即恢復游標和滾動位置
                 this.editor.setCursor(cursor);
