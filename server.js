@@ -132,15 +132,60 @@ async function initializeDatabase(connection) {
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 room_id VARCHAR(100),
                 user_id VARCHAR(100),
+                user_name VARCHAR(100),
                 code_content TEXT,
                 version INT,
                 save_name VARCHAR(100),
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_room_id (room_id),
-                INDEX idx_user_id (user_id)
+                INDEX idx_user_id (user_id),
+                INDEX idx_user_name (user_name),
+                INDEX idx_timestamp (timestamp)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
         console.log('✅ 代碼歷史表創建成功');
+
+        // 確保code_history表有所需的新字段（升級現有表）
+        try {
+            await connection.execute(`
+                ALTER TABLE code_history 
+                ADD COLUMN IF NOT EXISTS user_name VARCHAR(100),
+                ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ADD INDEX IF NOT EXISTS idx_user_name (user_name),
+                ADD INDEX IF NOT EXISTS idx_timestamp (timestamp)
+            `);
+            console.log('✅ 代碼歷史表字段升級成功');
+        } catch (alterError) {
+            // MySQL可能不支持IF NOT EXISTS語法，嘗試單獨添加
+            try {
+                await connection.execute(`ALTER TABLE code_history ADD COLUMN user_name VARCHAR(100)`);
+                console.log('✅ 添加user_name字段成功');
+            } catch (e) {
+                // 字段可能已存在，忽略錯誤
+            }
+            
+            try {
+                await connection.execute(`ALTER TABLE code_history ADD COLUMN timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+                console.log('✅ 添加timestamp字段成功');
+            } catch (e) {
+                // 字段可能已存在，忽略錯誤
+            }
+            
+            try {
+                await connection.execute(`ALTER TABLE code_history ADD INDEX idx_user_name (user_name)`);
+                console.log('✅ 添加user_name索引成功');
+            } catch (e) {
+                // 索引可能已存在，忽略錯誤
+            }
+            
+            try {
+                await connection.execute(`ALTER TABLE code_history ADD INDEX idx_timestamp (timestamp)`);
+                console.log('✅ 添加timestamp索引成功');
+            } catch (e) {
+                // 索引可能已存在，忽略錯誤
+            }
+        }
 
         // 5. 創建聊天消息表（可選外鍵約束）
         await connection.execute(`
@@ -254,11 +299,11 @@ try {
         console.log(`⚙️ AI功能狀態: 啟用`);
     } else {
         console.log('⚠️ 未找到 ai_config.json 文件且未設定環境變數，AI助教功能將停用');
-        aiConfig = {
-            openai_api_key: '',
-            model: 'gpt-3.5-turbo',
-            enabled: false
-        };
+            aiConfig = {
+                openai_api_key: '',
+                model: 'gpt-3.5-turbo',
+                enabled: false
+            };
     }
 } catch (error) {
     console.error('❌ 載入AI配置失敗:', error.message);
@@ -368,7 +413,12 @@ app.get('/api/teacher/rooms', (req, res) => {
     ).length;
     
     // 計算房間內學生總數
-    const studentsInRooms = Object.values(rooms).reduce((total, room) => total + room.userCount, 0);
+    const studentsInRooms = Object.values(rooms).reduce((total, room) => {
+        const validUsers = Object.values(room.users || {}).filter(user => 
+            user.ws && user.ws.readyState === WebSocket.OPEN
+        );
+        return total + validUsers.length;
+    }, 0);
     
     // 計算非教師用戶數（排除教師監控連接）
     const nonTeacherUsers = Object.values(users).filter(user => 
@@ -694,6 +744,10 @@ async function handleMessage(ws, message) {
             await handleSaveCode(ws, message);
             break;
 
+        case 'get_history':
+            await handleGetHistory(ws, message);
+            break;
+
         default:
             console.warn(`⚠️ 未知消息類型: ${message.type} from ${ws.userId}`);
             
@@ -726,7 +780,7 @@ async function handleJoinRoom(ws, message) {
     
     console.log(`🚀 用戶 ${userName} 嘗試加入房間 ${roomId}`);
 
-    // 創建房間（如果不存在）
+    // 檢查房間是否存在，如果不存在則創建
     if (!rooms[roomId]) {
         const newRoom = await createRoom(roomId);
         rooms[roomId] = newRoom;
@@ -737,22 +791,32 @@ async function handleJoinRoom(ws, message) {
     
     // 確保 room 對象及其 users 屬性存在
     if (!room || !room.users) {
-        console.error(`❌ 嚴重錯誤：無法獲取或初始化房間 ${roomId} 的用戶列表。`);
         ws.send(JSON.stringify({
-                type: 'join_room_error',
-            error: 'room_initialization_failed',
-            message: `無法初始化房間 ${roomId}，請稍後再試。`
-            }));
-            return;
-        }
-
-    // 清理房間內無效的用戶連接
-    const invalidUserIds = [];
-    Object.entries(room.users).forEach(([userId, user]) => {
-        if (!user.ws || user.ws.readyState !== WebSocket.OPEN) {
-            invalidUserIds.push(userId);
+            type: 'join_room_error',
+            error: 'room_error',
+            message: '房間初始化失敗'
+        }));
+        return;
     }
-    });
+
+    // 檢查用戶名是否已存在於該房間
+    const isUserNameTaken = Object.values(room.users).some(user => 
+        user.userName === userName && user.ws.readyState === WebSocket.OPEN
+    );
+
+    if (isUserNameTaken) {
+        ws.send(JSON.stringify({
+            type: 'join_room_error',
+            error: 'name_duplicate',
+            message: '此用戶名稱在房間中已被使用，請使用其他名稱'
+        }));
+        return;
+    }
+
+    // 清理房間中的無效連接
+    const invalidUserIds = Object.keys(room.users).filter(userId => 
+        !room.users[userId].ws || room.users[userId].ws.readyState !== WebSocket.OPEN
+    );
     
     invalidUserIds.forEach(userId => {
         delete room.users[userId];
@@ -763,103 +827,119 @@ async function handleJoinRoom(ws, message) {
     const existingUserInRoom = room.users[ws.userId];
     const isReconnect = existingUserInRoom && existingUserInRoom.userName === userName;
 
-    // 更新用戶信息
-    ws.currentRoom = roomId;
-    ws.userName = userName;
-    
-    // 更新全域用戶信息
-    if (users[ws.userId]) {
-        users[ws.userId].roomId = roomId;
-        users[ws.userId].name = userName;
-        console.log(`📝 更新全域用戶信息: ${ws.userId} -> 房間: ${roomId}, 名稱: ${userName}`);
-    } else {
-        console.warn(`⚠️ 警告：在全域用戶列表中找不到用戶 ${ws.userId}`);
+    try {
+        // 更新用戶信息
+        ws.currentRoom = roomId;
+        ws.userName = userName;
+        
+        // 更新全域用戶信息
+        if (users[ws.userId]) {
+            users[ws.userId].roomId = roomId;
+            users[ws.userId].name = userName;
+            console.log(`📝 更新全域用戶信息: ${ws.userId} -> 房間: ${roomId}, 名稱: ${userName}`);
+        }
+        
+        // 添加用戶到房間
+        room.users[ws.userId] = {
+            userId: ws.userId,
+            userName: userName,
+            ws: ws,
+            joinTime: new Date(),
+            isActive: true,
+            cursor: null
+        };
+
+        // 獲取當前有效用戶列表
+        const activeUsers = Object.values(room.users)
+            .filter(u => u.ws && u.ws.readyState === WebSocket.OPEN)
+            .map(u => ({
+                userId: u.userId,
+                userName: u.userName,
+                isActive: u.isActive
+            }));
+
+        // 發送加入成功消息給當前用戶
+        ws.send(JSON.stringify({
+            type: 'room_joined',
+            roomId: roomId,
+            userName: userName,
+            userId: ws.userId,
+            code: room.code || '',
+            version: room.version || 0,
+            users: activeUsers,
+            chatHistory: room.chatHistory || [],
+            isReconnect: isReconnect
+        }));
+        
+        // 廣播用戶加入消息給房間內其他用戶
+        broadcastToRoom(roomId, {
+            type: isReconnect ? 'user_reconnected' : 'user_joined',
+            userName: userName,
+            userId: ws.userId,
+            users: activeUsers
+        }, ws.userId);
+        
+        console.log(`✅ ${userName} 成功加入房間 ${roomId}，當前在線用戶: ${activeUsers.length} 人`);
+    } catch (error) {
+        console.error(`❌ 加入房間時發生錯誤:`, error);
+        // 發生錯誤時，清理已添加的用戶信息
+        if (room.users[ws.userId]) {
+            delete room.users[ws.userId];
+        }
+        ws.currentRoom = null;
+        ws.userName = null;
+        
+        ws.send(JSON.stringify({
+            type: 'join_room_error',
+            error: 'server_error',
+            message: '加入房間時發生錯誤，請稍後重試'
+        }));
     }
-    
-    // 添加用戶到房間
-    room.users[ws.userId] = {
-        userId: ws.userId,
-        userName: userName,
-        ws: ws,
-        joinTime: new Date(),
-        isActive: true,
-        cursor: null // 初始化游標位置
-    };
-
-    console.log(`👤 ${userName} ${isReconnect ? '重連到' : '加入'} 房間: ${roomId}`);
-    console.log(`📊 房間 ${roomId} 現有用戶數: ${Object.keys(room.users).length}`);
-    
-    // 獲取當前有效用戶列表
-    const activeUsers = Object.values(room.users).filter(u => 
-        u.ws && u.ws.readyState === WebSocket.OPEN
-    ).map(u => ({
-        userId: u.userId,
-        userName: u.userName,
-        isActive: u.isActive
-    }));
-
-    // 發送加入成功消息給當前用戶
-    ws.send(JSON.stringify({
-        type: 'room_joined',
-        roomId: roomId,
-        userName: userName,
-        userId: ws.userId,
-        code: room.code || '',
-        version: room.version || 0,
-        users: activeUsers,
-        chatHistory: room.chatHistory || [],
-        isReconnect: isReconnect
-    }));
-    
-    // 廣播用戶加入消息給房間內其他用戶
-    const joinMessage = {
-        type: isReconnect ? 'user_reconnected' : 'user_joined',
-        userName: userName,
-        userId: ws.userId,
-        users: activeUsers
-    };
-
-    broadcastToRoom(roomId, joinMessage, ws.userId);
-    
-    console.log(`✅ ${userName} 成功加入房間 ${roomId}，當前在線用戶: ${activeUsers.length} 人`);
 }
 
 // 離開房間處理
 function handleLeaveRoom(ws, message) {
-    const roomId = message.room || ws.currentRoom;
+    const roomId = ws.currentRoom;
+    const userName = ws.userName;
+    
     if (!roomId || !rooms[roomId]) {
-        console.error(`❌ 房間不存在: ${roomId}`);
+        console.warn(`⚠️ 用戶嘗試離開不存在的房間: ${roomId}`);
         return;
     }
     
     const room = rooms[roomId];
-    const userName = ws.userName;
+    
+    // 從房間中移除用戶
+    if (room.users[ws.userId]) {
+        delete room.users[ws.userId];
+        console.log(`👋 用戶 ${userName} 離開房間 ${roomId}`);
         
-        // 從房間中移除用戶
-    delete room.users[ws.userId];
+        // 獲取更新後的用戶列表
+        const activeUsers = Object.values(room.users)
+            .filter(u => u.ws && u.ws.readyState === WebSocket.OPEN)
+            .map(u => ({
+                userId: u.userId,
+                userName: u.userName,
+                isActive: u.isActive
+            }));
         
-        // 通知其他用戶有用戶離開，並發送更新後的用戶列表
+        // 廣播用戶離開消息（包含更新後的用戶列表）
         broadcastToRoom(roomId, {
             type: 'user_left',
             userName: userName,
-        userId: ws.userId,
-        timestamp: Date.now()
-    }, ws.userId);
+            users: activeUsers
+        });
         
-        console.log(`👋 ${userName} 離開房間: ${roomId}`);
-        
-    // 如果房間空了，清理房間
-    if (Object.keys(room.users).length === 0) {
-        console.log(`⏰ 房間 ${roomId} 已空，將在 2 分鐘後清理`);
-            setTimeout(() => {
-            if (rooms[roomId]) {
-                delete rooms[roomId];
-                    console.log(`🧹 清理空房間: ${roomId}`);
-                    // 房間被清理時也更新統計
-                    broadcastStatsToTeachers();
-                }
-        }, 120000);
+        // 如果房間空了，清理房間
+        if (Object.keys(room.users).length === 0) {
+            console.log(`🧹 清理空房間: ${roomId}`);
+            delete rooms[roomId];
         }
+    }
+    
+    // 清理用戶的房間信息
+    ws.currentRoom = null;
+    ws.userName = null;
 }
 
 // 游標變更處理
@@ -933,18 +1013,24 @@ async function handleChatMessage(ws, message) {
 
 // 教師監控註冊處理
 function handleTeacherMonitor(ws, message) {
-    const action = message.data?.action;
+    const action = message.data?.action || message.action || 'register'; // 兼容多種格式
+    
+    console.log(`👨‍🏫 [Teacher Monitor] 收到教師監控請求:`, message);
+    console.log(`👨‍🏫 [Teacher Monitor] 動作:`, action);
     
     if (action === 'register') {
         // 註冊為教師監控
         teacherMonitors.add(ws.userId);
-        users[ws.userId].isTeacher = true;
+        if (users[ws.userId]) {
+            users[ws.userId].isTeacher = true;
+        }
         
         console.log(`👨‍🏫 教師監控已註冊: ${ws.userId}`);
+        console.log(`👨‍🏫 當前教師數量: ${teacherMonitors.size}`);
         
         // 發送歡迎消息
         ws.send(JSON.stringify({
-            type: 'welcome',
+            type: 'teacher_monitor_registered',
             userId: ws.userId,
             message: '教師監控已連接',
             timestamp: Date.now()
@@ -961,24 +1047,75 @@ function handleTeacherMonitor(ws, message) {
         }
         
         console.log(`👨‍🏫 教師監控已取消註冊: ${ws.userId}`);
+    } else {
+        // 默認行為：如果沒有指定action，直接註冊為教師
+        teacherMonitors.add(ws.userId);
+        if (users[ws.userId]) {
+            users[ws.userId].isTeacher = true;
+        }
+        
+        console.log(`👨‍🏫 教師監控已自動註冊: ${ws.userId} (默認行為)`);
+        
+        // 發送歡迎消息
+        ws.send(JSON.stringify({
+            type: 'teacher_monitor_registered',
+            userId: ws.userId,
+            message: '教師監控已連接',
+            timestamp: Date.now()
+        }));
+        
+        // 發送當前統計信息
+        broadcastStatsToTeachers();
     }
 }
 
 // 教師廣播處理
 function handleTeacherBroadcast(ws, message) {
-    if (!teacherMonitors.has(ws.userId)) return;
+    console.log(`📢 [Teacher Broadcast] 收到教師廣播請求:`, message);
+    console.log(`📢 [Teacher Broadcast] 用戶 ${ws.userId} 是否為教師:`, teacherMonitors.has(ws.userId));
     
-    const { targetRoom, message: broadcastMessage, messageType } = message.data;
+    if (!teacherMonitors.has(ws.userId)) {
+        console.log(`❌ 非教師用戶嘗試發送廣播: ${ws.userId}`);
+        ws.send(JSON.stringify({
+            type: 'error',
+            error: '權限不足',
+            message: '只有教師可以發送廣播消息'
+        }));
+        return;
+    }
+    
+    const { targetRoom, message: broadcastMessage, messageType } = message.data || message;
     
     console.log(`📢 教師廣播到房間 ${targetRoom}: ${broadcastMessage}`);
     
-    if (targetRoom && rooms[targetRoom]) {
+    if (targetRoom === 'all') {
+        // 廣播到所有房間
+        Object.keys(rooms).forEach(roomId => {
+            broadcastToRoom(roomId, {
+                type: 'teacher_broadcast',
+                message: broadcastMessage,
+                messageType: messageType || 'info',
+                timestamp: Date.now(),
+                from: 'teacher'
+            });
+        });
+        console.log(`📢 已廣播到所有房間: ${Object.keys(rooms).length} 個房間`);
+    } else if (targetRoom && rooms[targetRoom]) {
         broadcastToRoom(targetRoom, {
             type: 'teacher_broadcast',
             message: broadcastMessage,
             messageType: messageType || 'info',
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            from: 'teacher'
         });
+        console.log(`📢 已廣播到房間 ${targetRoom}`);
+    } else {
+        console.log(`❌ 目標房間不存在: ${targetRoom}`);
+        ws.send(JSON.stringify({
+            type: 'error',
+            error: '房間不存在',
+            message: `房間 "${targetRoom}" 不存在`
+        }));
     }
 }
 
@@ -986,6 +1123,11 @@ function handleTeacherBroadcast(ws, message) {
 function handleTeacherChat(ws, message) {
     if (!teacherMonitors.has(ws.userId)) {
         console.log(`❌ 非教師用戶嘗試發送教師聊天: ${ws.userId}`);
+        ws.send(JSON.stringify({
+            type: 'error',
+            error: '權限不足',
+            message: '只有教師可以發送教師消息'
+        }));
         return;
     }
     
@@ -1000,19 +1142,29 @@ function handleTeacherChat(ws, message) {
         userName: teacherName || '教師',
         message: chatMessage,
         timestamp: Date.now(),
-        isTeacher: true
+        isTeacher: true,
+        roomName: targetRoom === 'all' ? '所有房間' : targetRoom
     };
     
     if (targetRoom === 'all') {
         // 廣播到所有房間
-        Object.values(rooms).forEach(room => {
+        Object.keys(rooms).forEach(roomId => {
+            const room = rooms[roomId];
+            if (!room.chatHistory) {
+                room.chatHistory = [];
+            }
+            
             // 添加到房間聊天歷史
-            room.chatHistory.push(teacherChatMessage);
+            room.chatHistory.push({
+                ...teacherChatMessage,
+                roomName: roomId
+            });
             
             // 廣播給房間內的所有用戶
-            broadcastToRoom(room.id, {
+            broadcastToRoom(roomId, {
                 type: 'chat_message',
-                ...teacherChatMessage
+                ...teacherChatMessage,
+                roomName: roomId
             });
         });
         
@@ -1023,17 +1175,20 @@ function handleTeacherChat(ws, message) {
                 if (teacher && teacher.ws && teacher.ws.readyState === WebSocket.OPEN) {
                     teacher.ws.send(JSON.stringify({
                         type: 'chat_message',
-                        ...teacherChatMessage,
-                        roomName: '所有房間'
+                        ...teacherChatMessage
                     }));
                 }
             }
         });
         
         console.log(`📢 教師消息已廣播到所有房間`);
-    } else if (targetRoom && rooms[targetRoom]) {
+    } else if (rooms[targetRoom]) {
         // 發送到特定房間
         const room = rooms[targetRoom];
+        if (!room.chatHistory) {
+            room.chatHistory = [];
+        }
+        
         room.chatHistory.push(teacherChatMessage);
         
         broadcastToRoom(targetRoom, {
@@ -1048,8 +1203,7 @@ function handleTeacherChat(ws, message) {
                 if (teacher && teacher.ws && teacher.ws.readyState === WebSocket.OPEN) {
                     teacher.ws.send(JSON.stringify({
                         type: 'chat_message',
-                        ...teacherChatMessage,
-                        roomName: targetRoom
+                        ...teacherChatMessage
                     }));
                 }
             }
@@ -1058,6 +1212,11 @@ function handleTeacherChat(ws, message) {
         console.log(`💬 教師消息已發送到房間 ${targetRoom}`);
     } else {
         console.log(`❌ 目標房間不存在: ${targetRoom}`);
+        ws.send(JSON.stringify({
+            type: 'error',
+            error: '房間不存在',
+            message: `房間 "${targetRoom}" 不存在`
+        }));
     }
 }
 
@@ -1261,6 +1420,13 @@ function executePythonCode(code, callback) {
                     // 將臨時文件路徑替換為更友好的顯示
                     error = error.replace(new RegExp(tempFilePath.replace(/\\/g, '\\\\'), 'g'), '<您的代碼>');
                     error = error.replace(/File ".*?python_code_.*?\.py"/, 'File "<您的代碼>"');
+                    
+                    // 修復反斜杠處理問題，避免 /n 錯誤
+                    // 正確的方式：先處理實際的反斜杠+n組合，然後處理轉義的\n
+                    error = error.replace(/\\n/g, '\n');
+                    
+                    // 額外檢查：如果包含 "/n" (錯誤的反斜杠)，替換為正確的換行
+                    error = error.replace(/\/n/g, '\n');
                     
                     console.log(`❌ 執行失敗: ${error}`);
                     callback({
@@ -2019,6 +2185,81 @@ async function guideCollaboration(code, context) {
     }
 }
 
+// 🆕 程式碼差異分析函數
+function performDifferenceAnalysis(code1, code2) {
+    const text1 = (code1 || '').trim();
+    const text2 = (code2 || '').trim();
+    
+    if (text1 === text2) {
+        return {
+            addedLines: 0,
+            removedLines: 0,
+            modifiedLines: 0,
+            changeType: 'identical',
+            hasSignificantChanges: false,
+            similarity: 100
+        };
+    }
+    
+    const lines1 = text1.split('\n').map(line => line.trim());
+    const lines2 = text2.split('\n').map(line => line.trim());
+    
+    let addedLines = 0;
+    let removedLines = 0;
+    let modifiedLines = 0;
+    
+    // 簡單的行級差異分析
+    const maxLines = Math.max(lines1.length, lines2.length);
+    const commonLines = Math.min(lines1.length, lines2.length);
+    
+    // 分析共同行的修改
+    for (let i = 0; i < commonLines; i++) {
+        if (lines1[i] !== lines2[i]) {
+            modifiedLines++;
+        }
+    }
+    
+    // 分析增減行
+    if (lines2.length > lines1.length) {
+        addedLines = lines2.length - lines1.length;
+    } else if (lines1.length > lines2.length) {
+        removedLines = lines1.length - lines2.length;
+    }
+    
+    // 判斷變更類型
+    let changeType = 'complex';
+    if (addedLines > 0 && removedLines === 0 && modifiedLines === 0) {
+        changeType = 'addition_only';
+    } else if (addedLines === 0 && removedLines > 0 && modifiedLines === 0) {
+        changeType = 'deletion_only';
+    } else if (addedLines === 0 && removedLines === 0 && modifiedLines > 0) {
+        changeType = 'modification_only';
+    } else if (addedLines > 0 && removedLines === 0) {
+        changeType = 'addition_with_modification';
+    } else if (removedLines > 0 && addedLines === 0) {
+        changeType = 'deletion_with_modification';
+    }
+    
+    // 判斷是否有重大變更
+    const totalChanges = addedLines + removedLines + modifiedLines;
+    const hasSignificantChanges = 
+        totalChanges > 5 || 
+        Math.abs(text1.length - text2.length) > 100 ||
+        modifiedLines > commonLines * 0.5; // 超過50%的行被修改
+    
+    // 計算相似度 (簡單演算法)
+    const similarity = Math.round((1 - totalChanges / Math.max(lines1.length, lines2.length, 1)) * 100);
+    
+    return {
+        addedLines,
+        removedLines,
+        modifiedLines,
+        changeType,
+        hasSignificantChanges,
+        similarity: Math.max(0, similarity)
+    };
+}
+
 // AI衝突分析
 async function analyzeConflict(conflictData) {
     console.log(`🔍 [analyzeConflict] 收到的衝突數據:`, conflictData);
@@ -2070,14 +2311,24 @@ ${conflictData?.conflictUser || '其他同學'}正在同時修改程式碼，形
     });
     
     try {
+        // 進行差異分析
+        const diffAnalysis = performDifferenceAnalysis(userCode, serverCode);
+        
         const conflictPrompt = `
-作為Python程式設計助教，請分析以下協作衝突情況並提供解決建議：
+作為Python程式設計助教，請分析以下協作衝突情況並提供詳細的解決建議：
 
 **協作衝突情況：**
 - 房間：${roomId}
 - 衝突同學：${conflictUser}
-- 我的版本：${userVersion}
-- 同學版本：${serverVersion}
+- 我的版本：${userVersion} (${userCode.length} 字符)
+- 同學版本：${serverVersion} (${serverCode.length} 字符)
+
+**差異分析結果：**
+- 新增行數：${diffAnalysis.addedLines}
+- 刪除行數：${diffAnalysis.removedLines}  
+- 修改行數：${diffAnalysis.modifiedLines}
+- 變更類型：${diffAnalysis.changeType}
+- 重大變更：${diffAnalysis.hasSignificantChanges ? '是' : '否'}
 
 **我的程式碼：**
 \`\`\`python
@@ -2090,12 +2341,13 @@ ${serverCode || '# (同學的代碼)'}
 \`\`\`
 
 請提供：
-1. 協作衝突的原因分析
-2. 兩個版本的差異比較（如果有代碼的話）
-3. 具體的協作解決建議
-4. 如何避免未來的協作衝突
+1. **衝突原因分析**：為什麼會發生這個衝突？
+2. **詳細差異比較**：兩個版本的具體差異是什麼？
+3. **合併建議**：如何最好地合併這兩個版本？哪些部分應該保留？
+4. **接受/拒絕建議**：基於代碼品質和功能完整性，建議接受還是拒絕對方的修改？
+5. **協作策略**：如何避免未來的協作衝突？
 
-請用繁體中文回答，使用清楚的段落和標題格式，包含適當的換行和分段，語氣要友善且具教育性。即使代碼為空也要提供有用的協作建議。
+請用繁體中文回答，使用清楚的段落和標題格式，提供具體可行的建議。重點關注代碼品質、功能完整性和協作效率。
         `;
         
         console.log(`📡 [analyzeConflict] 向OpenAI發送請求...`);
@@ -2475,43 +2727,160 @@ function broadcastStatsToTeachers() {
 
 // 處理代碼載入請求
 async function handleLoadCode(ws, message) {
-    const roomId = message.room || ws.currentRoom;
-    if (!roomId || !rooms[roomId]) {
+    const user = users[ws.userId];
+    if (!user || !user.roomId) {
         ws.send(JSON.stringify({
-            type: 'code_loaded',
-            success: false,
-            error: '請先加入房間'
+            type: 'load_code_error',
+            error: '用戶未在房間中'
         }));
         return;
     }
     
-    const room = rooms[roomId];
-    
-    const currentVersion = message.currentVersion || 0;
-    const latestVersion = room.version || 0;
-    const latestCode = room.code || '';
-    
-    console.log(`📥 ${ws.userName} 請求載入 - 當前版本: ${currentVersion}, 最新版本: ${latestVersion}`);
-    
-    // 比較版本，判斷是否已是最新
-    const isAlreadyLatest = currentVersion >= latestVersion;
-    
-    // 發送響應
-    ws.send(JSON.stringify({
-        type: 'code_loaded',
-        success: true,
-        code: latestCode,
-        version: latestVersion,
-        currentVersion: currentVersion,
-        isAlreadyLatest: isAlreadyLatest,
-        roomId: roomId
-    }));
-    
-    if (isAlreadyLatest) {
-        console.log(`✅ ${ws.userName} 的代碼已是最新版本 (${currentVersion})`);
-    } else {
-        console.log(`🔄 ${ws.userName} 載入最新代碼：版本 ${currentVersion} → ${latestVersion}`);
+    const room = rooms[user.roomId];
+    if (!room) {
+        ws.send(JSON.stringify({
+            type: 'load_code_error',
+            error: '房間不存在'
+        }));
+        return;
     }
+
+    const userName = user.name;
+    const { loadLatest } = message;
+
+    console.log(`📥 ${userName} 請求載入代碼 - 載入最新: ${loadLatest}`);
+
+    // 如果請求最新代碼，直接返回房間當前代碼
+    if (loadLatest) {
+        ws.send(JSON.stringify({
+            type: 'code_change',
+            code: room.code || '',
+            version: room.version || 0,
+            userName: 'system',
+            userId: 'system',
+            timestamp: Date.now(),
+            roomId: user.roomId,
+            forceUpdate: true
+        }));
+        console.log(`✅ 已發送最新代碼給 ${userName}`);
+        return;
+    }
+
+    // 否則從用戶的個人代碼歷史中載入
+    if (!room.userCodeHistory || !room.userCodeHistory[userName] || room.userCodeHistory[userName].length === 0) {
+        ws.send(JSON.stringify({
+            type: 'load_code_error',
+            error: '您還沒有保存任何代碼記錄',
+            message: '請先保存一些代碼再進行載入'
+        }));
+        return;
+    }
+
+    const userHistory = room.userCodeHistory[userName];
+    let codeToLoad = null;
+
+    // 根據請求類型選擇要載入的代碼
+    if (message.saveId) {
+        codeToLoad = userHistory.find(h => h.id === message.saveId);
+    } else {
+        codeToLoad = userHistory[userHistory.length - 1]; // 最新保存的代碼
+    }
+
+    if (!codeToLoad) {
+        ws.send(JSON.stringify({
+            type: 'load_code_error',
+            error: '找不到指定的代碼記錄'
+        }));
+        return;
+    }
+
+    // 發送載入成功消息
+    ws.send(JSON.stringify({
+        type: 'load_code_success',
+        code: codeToLoad.code,
+        saveId: codeToLoad.id,
+        timestamp: codeToLoad.timestamp,
+        message: '代碼載入成功'
+    }));
+
+    // 廣播代碼變更消息給房間內其他用戶
+    broadcastToRoom(user.roomId, {
+        type: 'code_loaded_notification',
+        userName: userName,
+        timestamp: Date.now()
+    }, ws.userId);
+}
+
+// 🆕 處理獲取用戶個人代碼歷史記錄
+async function handleGetHistory(ws, message) {
+    const user = users[ws.userId];
+    if (!user || !user.roomId) {
+        ws.send(JSON.stringify({
+            type: 'history_data',
+            success: false,
+            error: '用戶未在房間中',
+            history: []
+        }));
+        return;
+    }
+    
+    const room = rooms[user.roomId];
+    if (!room) {
+        ws.send(JSON.stringify({
+            type: 'history_data',
+            success: false,
+            error: '房間不存在',
+            history: []
+        }));
+        return;
+    }
+
+    const userName = user.name;
+    console.log(`📚 ${userName} 請求獲取個人代碼歷史記錄`);
+
+    // 獲取用戶的個人代碼歷史
+    let userHistory = [];
+    if (room.userCodeHistory && room.userCodeHistory[userName]) {
+        userHistory = room.userCodeHistory[userName];
+    }
+
+    if (isDatabaseAvailable && user.dbUserId) {
+        // 從數據庫獲取用戶的代碼歷史
+        try {
+            const [rows] = await pool.execute(
+                'SELECT * FROM code_history WHERE room_id = ? AND user_name = ? ORDER BY timestamp DESC LIMIT 50',
+                [user.roomId, userName]
+            );
+            
+            userHistory = rows.map(row => ({
+                id: `${userName}_${row.timestamp.getTime()}`,
+                code: row.code_content,
+                title: row.save_name || `代碼保存 - ${row.timestamp.toLocaleString()}`,
+                author: userName,
+                timestamp: row.timestamp.getTime(),
+                version: row.version
+            }));
+    
+            console.log(`📚 從數據庫獲取 ${userName} 的代碼歷史: ${userHistory.length} 條記錄`);
+        } catch (error) {
+            console.error(`❌ 從數據庫獲取代碼歷史失敗:`, error.message);
+            // 如果數據庫查詢失敗，返回空歷史
+            userHistory = [];
+        }
+    } else {
+        console.log(`📚 從內存獲取 ${userName} 的代碼歷史: ${userHistory.length} 條記錄`);
+    }
+
+    // 發送歷史記錄給用戶
+    ws.send(JSON.stringify({
+        type: 'history_data',
+        success: true,
+        history: userHistory,
+        userName: userName,
+        message: `獲取到 ${userHistory.length} 條您的代碼記錄`
+    }));
+
+    console.log(`✅ 已發送 ${userName} 的代碼歷史記錄: ${userHistory.length} 條`);
 }
 
 // 處理代碼保存（手動保存）
@@ -2536,29 +2905,46 @@ async function handleSaveCode(ws, message) {
 
     const { code, saveName } = message;
     const timestamp = Date.now();
+    const userName = user.name;
 
-    // 更新房間代碼和版本
-    room.code = code;
-    room.version++;
-    room.lastEditedBy = user.name;
-    room.lastActivity = timestamp;
+    // 🆕 為每個用戶創建獨立的代碼記錄
+    if (!room.userCodeHistory) {
+        room.userCodeHistory = {};
+    }
+    
+    if (!room.userCodeHistory[userName]) {
+        room.userCodeHistory[userName] = [];
+    }
+
+    // 🆕 保存到用戶的最新槽位（覆蓋最新記錄或新增）
+    const userHistory = room.userCodeHistory[userName];
+    const saveData = {
+        id: `${userName}_${timestamp}`,
+        code: code,
+        title: saveName || `${userName}的代碼保存 - ${new Date(timestamp).toLocaleString()}`,
+        author: userName,
+        timestamp: timestamp,
+        version: userHistory.length + 1
+    };
+
+    // 將新記錄添加到用戶歷史的最前面（最新的在前）
+    userHistory.unshift(saveData);
+
+    // 限制每個用戶的歷史記錄數量為50個
+    if (userHistory.length > 50) {
+        userHistory.splice(50);
+    }
 
     if (isDatabaseAvailable && user.dbUserId) {
-        // 數據庫模式：保存到數據庫
+        // 數據庫模式：保存到數據庫（用戶獨立）
         try {
-            // 保存到代碼歷史表
+            // 保存到代碼歷史表，使用用戶名作為標識
             await pool.execute(
-                'INSERT INTO code_history (room_id, user_id, code_content, version, save_name, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
-                [user.roomId, user.dbUserId, code, room.version, saveName || null, new Date(timestamp)]
+                'INSERT INTO code_history (room_id, user_id, code_content, version, save_name, timestamp, user_name) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [user.roomId, user.dbUserId, code, saveData.version, saveData.title, new Date(timestamp), userName]
             );
 
-            // 更新房間表的當前代碼
-            await pool.execute(
-                'UPDATE rooms SET current_code_content = ?, current_code_version = ?, last_activity = CURRENT_TIMESTAMP WHERE id = ?',
-                [code, room.version, user.roomId]
-            );
-
-            console.log(`💾 用戶 ${user.name} 手動保存代碼到數據庫 - 房間: ${user.roomId}, 版本: ${room.version}, 名稱: ${saveName || '未命名'}`);
+            console.log(`💾 用戶 ${userName} 保存代碼到數據庫 - 房間: ${user.roomId}, 版本: ${saveData.version}, 名稱: ${saveData.title}`);
         } catch (error) {
             console.error(`❌ 保存代碼到數據庫失敗:`, error.message);
             ws.send(JSON.stringify({
@@ -2569,24 +2955,7 @@ async function handleSaveCode(ws, message) {
         }
     } else {
         // 本地模式：保存到內存和本地文件
-        if (!room.codeHistory) {
-            room.codeHistory = [];
-        }
-        
-        room.codeHistory.push({
-            code: code,
-            version: room.version,
-            saveName: saveName || `保存-${new Date(timestamp).toLocaleString()}`,
-            timestamp: timestamp,
-            savedBy: user.name
-        });
-
-        // 限制歷史記錄數量（本地模式）
-        if (room.codeHistory.length > 50) {
-            room.codeHistory = room.codeHistory.slice(-50);
-        }
-
-        console.log(`💾 用戶 ${user.name} 手動保存代碼到本地 - 房間: ${user.roomId}, 版本: ${room.version}, 名稱: ${saveName || '未命名'}`);
+        console.log(`💾 用戶 ${userName} 保存代碼到本地 - 房間: ${user.roomId}, 版本: ${saveData.version}, 名稱: ${saveData.title}`);
     }
 
     // 保存到本地文件
@@ -2595,58 +2964,54 @@ async function handleSaveCode(ws, message) {
     // 發送成功回應
     ws.send(JSON.stringify({
         type: 'save_code_success',
-        version: room.version,
-        saveName: saveName || `保存-${new Date(timestamp).toLocaleString()}`,
-        timestamp: timestamp
+        version: saveData.version,
+        saveName: saveData.title,
+        timestamp: timestamp,
+        message: `代碼已保存到您的個人槽位 (版本 ${saveData.version})`
     }));
 
-    // 廣播版本更新給房間內其他用戶
+    // 🆕 只通知其他用戶有人保存了代碼，但不共享具體內容
     broadcastToRoom(user.roomId, {
-        type: 'code_version_updated',
-        version: room.version,
-        savedBy: user.name,
-        saveName: saveName
+        type: 'user_saved_code',
+        userName: userName,
+        saveName: saveData.title,
+        timestamp: timestamp
     }, ws.userId);
 }
 
 // 處理代碼變更
 function handleCodeChange(ws, message) {
-    const roomId = message.room || ws.currentRoom;
-    if (!roomId || !rooms[roomId]) {
-        console.error(`❌ 房間不存在: ${roomId}`);
+    const user = users[ws.userId];
+    if (!user || !user.roomId) {
+        ws.send(JSON.stringify({
+            type: 'error',
+            error: '用戶未在房間中'
+        }));
         return;
     }
 
-    const room = rooms[roomId];
-    
-    // 檢查是否為強制更新
-    const isForceUpdate = message.forceUpdate === true;
-    
-    // 更新房間代碼和版本
+    const room = rooms[user.roomId];
+    if (!room) {
+        ws.send(JSON.stringify({
+            type: 'error',
+            error: '房間不存在'
+        }));
+        return;
+    }
+
+    // 更新房間代碼
     room.code = message.code;
     room.version = (room.version || 0) + 1;
-    room.lastModified = Date.now();
-    room.lastModifiedBy = ws.userId;
-
-    console.log(`📝 代碼變更 - 房間: ${roomId}, 版本: ${room.version}, 用戶: ${ws.userName}, 強制更新: ${isForceUpdate}`);
-
-    // 廣播消息
-    const broadcastMessage = {
+    
+    // 廣播代碼變更給房間內所有用戶
+    broadcastToRoom(user.roomId, {
         type: 'code_change',
         code: message.code,
         version: room.version,
-        userName: ws.userName,
+        userName: user.name,
         userId: ws.userId,
-        timestamp: Date.now(),
-        roomId: roomId,
-        forceUpdate: isForceUpdate // 傳遞強制更新標記
-    };
-
-    // 廣播給房間內其他用戶
-    broadcastToRoom(roomId, broadcastMessage, ws.userId);
-
-    // 保存數據
-    saveDataToFile();
+        timestamp: Date.now()
+    });
 }
 
 // 🆕 處理衝突通知 - 轉發給目標用戶
