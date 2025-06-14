@@ -263,9 +263,33 @@ class WebSocketManager {
         // 更新編輯器代碼
         if (window.Editor && typeof window.Editor.setCode === 'function') {
             console.log('📝 設置初始代碼:', message.code);
-            window.Editor.setCode(message.code || '', message.version || 0);
+            // 強制更新代碼，忽略版本檢查
+            window.Editor.setCode(message.code || '', message.version || 0, true);
+            
+            // 立即請求最新代碼以確保同步
+            this.sendMessage({
+                type: 'load_code',
+                loadLatest: true,
+                room: message.roomId
+            });
         } else {
             console.warn('⚠️ 編輯器未就緒，無法設置初始代碼');
+            // 設置重試機制
+            let retryCount = 0;
+            const maxRetries = 5;
+            const retryInterval = setInterval(() => {
+                if (window.Editor && typeof window.Editor.setCode === 'function') {
+                    window.Editor.setCode(message.code || '', message.version || 0, true);
+                    clearInterval(retryInterval);
+                    console.log('✅ 重試成功：編輯器代碼已設置');
+                } else if (++retryCount >= maxRetries) {
+                    clearInterval(retryInterval);
+                    console.error('❌ 編輯器初始化失敗，請重新整理頁面');
+                    if (window.UI && typeof window.UI.showErrorToast === 'function') {
+                        window.UI.showErrorToast('編輯器初始化失敗，請重新整理頁面');
+                    }
+                }
+            }, 1000);
         }
 
         // 初始化 SaveLoadManager
