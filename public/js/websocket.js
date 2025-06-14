@@ -381,10 +381,10 @@ class WebSocketManager {
                 if (window.Editor && typeof window.Editor.editor?.setValue === 'function') {
                     console.log('🔄 降級處理：直接設置代碼');
                     
-                    // 保存當前游標位置和選擇範圍
                     const editor = window.Editor.editor;
                     const currentPosition = editor.getCursor();
                     const currentSelection = editor.getSelection();
+                    const currentContent = editor.getValue();
                     
                     // 更新代碼
                     editor.setValue(message.code || '');
@@ -397,23 +397,25 @@ class WebSocketManager {
                         }
                     }
                     
-                    // 如果是其他用戶的更新，恢復游標位置和選擇範圍
-                    if (message.userName !== this.currentUser) {
+                    // 只在代碼內容實際變化時才考慮恢復游標位置
+                    if (message.userName !== this.currentUser && currentContent !== message.code) {
                         // 確保游標位置在有效範圍內
                         const totalLines = editor.lineCount();
                         if (currentPosition.line < totalLines) {
                             const lineContent = editor.getLine(currentPosition.line);
-                            editor.setCursor({
-                                line: currentPosition.line,
-                                ch: Math.min(currentPosition.ch, lineContent ? lineContent.length : 0)
-                            });
+                            const maxColumn = lineContent ? lineContent.length : 0;
                             
-                            // 如果有選擇範圍，也恢復它
+                            // 只在游標位置有效時才設置
+                            if (currentPosition.ch <= maxColumn) {
+                                editor.setCursor(currentPosition);
+                            }
+                            
+                            // 只在選擇範圍有效時才恢復
                             if (currentSelection && currentSelection.length > 0) {
-                                editor.setSelection(
-                                    currentSelection.anchor || currentPosition,
-                                    currentSelection.head || currentPosition
-                                );
+                                const selectionValid = editor.getLine(currentSelection.head.line) !== undefined;
+                                if (selectionValid) {
+                                    editor.setSelection(currentSelection.anchor, currentSelection.head);
+                                }
                             }
                         }
                     }
@@ -427,14 +429,12 @@ class WebSocketManager {
                 window.Editor.lastRemoteChangeTime = Date.now();
             }
             
-            /* 暫時註解協作用戶更新
             // 更新協作用戶列表
             if (message.userName && message.userName !== this.currentUser) {
                 if (window.Editor && typeof window.Editor.updateCollaboratingUsers === 'function') {
                     window.Editor.updateCollaboratingUsers(message.userName);
                 }
             }
-            */
             
         } catch (error) {
             console.error('❌ 處理代碼變更時發生錯誤:', error);

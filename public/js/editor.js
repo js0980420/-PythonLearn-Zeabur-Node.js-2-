@@ -33,7 +33,6 @@ class EditorManager {
             autoCloseBrackets: true,
             matchBrackets: true,
             lineWrapping: true,
-            autofocus: true, // 添加自動聚焦
             extraKeys: {
                 "Ctrl-S": (cm) => {
                     this.saveCode();
@@ -69,12 +68,11 @@ class EditorManager {
         // 載入歷史記錄
         this.loadHistoryFromStorage();
 
-        // 💡 確保編輯器可以輸入 - 延遲聚焦
+        // 移除自動聚焦，改為只刷新編輯器
         setTimeout(() => {
             if (this.editor) {
                 this.editor.refresh();
-                this.editor.focus();
-                console.log('✅ 編輯器已聚焦，可以開始輸入');
+                console.log('✅ 編輯器已刷新，準備就緒');
             }
         }, 100);
 
@@ -787,7 +785,9 @@ class EditorManager {
             type: 'code_change',
             code: code,
             userName: wsManager.currentUser,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            // 🔧 新增：標記是否為預警後的發送
+            hasConflictWarning: !forceUpdate && this.shouldShowConflictWarning()
         };
         
         // 如果是強制更新，添加標記
@@ -797,6 +797,11 @@ class EditorManager {
         }
         
         wsManager.sendMessage(message);
+
+        // 顯示協作提醒
+        if (this.collaboratingUsers.size > 0) {
+            UI.showCollaborationAlert(this.collaboratingUsers);
+        }
     }
 
     // 🆕 檢查是否需要顯示衝突預警
