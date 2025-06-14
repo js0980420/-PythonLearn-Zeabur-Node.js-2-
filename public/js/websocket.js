@@ -400,16 +400,20 @@ class WebSocketManager {
                     // 如果是其他用戶的更新，恢復游標位置和選擇範圍
                     if (message.userName !== this.currentUser) {
                         // 確保游標位置在有效範圍內
-                        const lines = editor.session.getLength();
-                        if (currentPosition.row < lines) {
-                            editor.moveCursorTo(
-                                currentPosition.row,
-                                Math.min(currentPosition.column, editor.session.getLine(currentPosition.row).length)
-                            );
+                        const totalLines = editor.lineCount();
+                        if (currentPosition.line < totalLines) {
+                            const lineContent = editor.getLine(currentPosition.line);
+                            editor.setCursor({
+                                line: currentPosition.line,
+                                ch: Math.min(currentPosition.ch, lineContent ? lineContent.length : 0)
+                            });
                             
                             // 如果有選擇範圍，也恢復它
-                            if (!currentSelection.isEmpty()) {
-                                editor.selection.setRange(currentSelection);
+                            if (currentSelection && currentSelection.length > 0) {
+                                editor.setSelection(
+                                    currentSelection.anchor || currentPosition,
+                                    currentSelection.head || currentPosition
+                                );
                             }
                         }
                     }

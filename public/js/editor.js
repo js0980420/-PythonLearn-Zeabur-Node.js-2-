@@ -366,16 +366,20 @@ class EditorManager {
                 // 如果是其他用戶的更新，恢復游標位置和選擇範圍
                 if (message.userName !== wsManager.currentUser) {
                     // 確保游標位置在有效範圍內
-                    const lines = this.editor.session.getLength();
-                    if (currentPosition.row < lines) {
-                        this.editor.moveCursorTo(
-                            currentPosition.row,
-                            Math.min(currentPosition.column, this.editor.session.getLine(currentPosition.row).length)
-                        );
+                    const totalLines = this.editor.lineCount();
+                    if (currentPosition.line < totalLines) {
+                        const lineContent = this.editor.getLine(currentPosition.line);
+                        this.editor.setCursor({
+                            line: currentPosition.line,
+                            ch: Math.min(currentPosition.ch, lineContent ? lineContent.length : 0)
+                        });
                         
                         // 如果有選擇範圍，也恢復它
-                        if (!currentSelection.isEmpty()) {
-                            this.editor.selection.setRange(currentSelection);
+                        if (currentSelection && currentSelection.length > 0) {
+                            this.editor.setSelection(
+                                currentSelection.anchor || currentPosition,
+                                currentSelection.head || currentPosition
+                            );
                         }
                     }
                 }
