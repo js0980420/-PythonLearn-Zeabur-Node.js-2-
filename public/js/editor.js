@@ -11,6 +11,7 @@ class EditorManager {
         this.codeHistory = JSON.parse(localStorage.getItem('codeHistory') || '[]');
         this.maxHistorySize = 10;
         this.lastRemoteChangeTime = null;
+        this.activeConflicts = new Map();
         
         console.log('🔧 編輯器管理器已創建，初始版本號:', this.codeVersion);
     }
@@ -60,10 +61,13 @@ class EditorManager {
             return;
         }
 
+        // 初始化事件監聽 - 移到最前面
+        this.initializeEventListeners();
+
         // 動態設置編輯器樣式
         this.setupEditorStyles();
 
-        // 統一編輯狀態管理 - 只在這裡設置，避免重複
+        // 統一編輯狀態管理
         this.setupEditingStateTracking();
 
         // 設置自動保存 - 5分鐘一次
@@ -71,9 +75,6 @@ class EditorManager {
         
         // 載入歷史記錄
         this.loadHistoryFromStorage();
-
-        // 初始化事件監聽
-        this.initializeEventListeners();
         
         // 初始化衝突分析按鈕
         this.initConflictAnalysisButton();
@@ -866,42 +867,91 @@ class EditorManager {
     }
 
     // 顯示衝突預警
-    showConflictWarning(editingUsers) {
-        if (!window.UI) return;
+    showConflictWarning(conflictingUsers) {
+        const warningContainer = document.getElementById('conflictWarning');
+        if (!warningContainer) return;
+
+        const userNames = conflictingUsers.map(user => user.userName).join('、');
         
-        const editingUserNames = editingUsers
-            .filter(user => user.userName !== wsManager.currentUser)
-            .map(user => user.userName)
-            .join(', ');
-            
-        const warningDiv = document.createElement('div');
-        warningDiv.className = 'conflict-warning';
-        warningDiv.innerHTML = `
-            <div class="alert alert-warning" role="alert">
-                <h5>⚠️ 協作衝突預警</h5>
-                <p>${editingUserNames} 正在編輯代碼。繼續編輯可能會導致衝突。</p>
-                <div class="btn-group">
-                    <button class="btn btn-sm btn-info analyze-conflict">
-                        <i class="fas fa-robot"></i> AI分析建議
+        warningContainer.innerHTML = `
+            <div class="alert alert-warning alert-dismissible fade show" role="alert">
+                <strong>⚠️ 衝突警告！</strong> 
+                <p>用戶 ${userNames} 正在編輯相同的程式碼區域。</p>
+                <div class="btn-group" role="group">
+                    <button type="button" class="btn btn-success btn-sm" onclick="Editor.resolveConflict('accept')">
+                        接受修改
                     </button>
-                    <button class="btn btn-sm btn-secondary dismiss-warning">
-                        <i class="fas fa-times"></i> 我知道了
+                    <button type="button" class="btn btn-danger btn-sm" onclick="Editor.resolveConflict('reject')">
+                        拒絕修改
+                    </button>
+                    <button type="button" class="btn btn-info btn-sm" onclick="Editor.resolveConflict('share')">
+                        分享到聊天室
+                    </button>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="Editor.resolveConflict('ai')">
+                        AI 分析
                     </button>
                 </div>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
             </div>
         `;
-        
-        // 添加按鈕事件
-        warningDiv.querySelector('.analyze-conflict').addEventListener('click', () => {
-            this.showAIConflictAnalysis(editingUsers);
-        });
-        
-        warningDiv.querySelector('.dismiss-warning').addEventListener('click', () => {
-            warningDiv.remove();
-        });
-        
+
         // 顯示警告
-        document.body.appendChild(warningDiv);
+        warningContainer.style.display = 'block';
+        
+        // 添加到活動衝突列表
+        this.activeConflicts.set('current', {
+            users: conflictingUsers,
+            code: this.editor.getValue()
+        });
+    }
+
+    // 解決衝突
+    async resolveConflict(action) {
+        const currentConflict = this.activeConflicts.get('current');
+        if (!currentConflict) return;
+
+        switch (action) {
+            case 'accept':
+                // 接受當前修改
+                wsManager.sendMessage({
+                    type: 'conflict_resolved',
+                    resolution: 'accept',
+                    code: this.editor.getValue()
+                });
+                break;
+
+            case 'reject':
+                // 拒絕當前修改，恢復到衝突前的狀態
+                this.editor.setValue(currentConflict.code);
+                break;
+
+            case 'share':
+                // 分享到聊天室
+                if (window.chatManager) {
+                    window.chatManager.sendMessage({
+                        type: 'conflict_share',
+                        message: `衝突代碼分享：\n\`\`\`python\n${this.editor.getValue()}\n\`\`\``,
+                        userName: wsManager.currentUser
+                    });
+                }
+                break;
+
+            case 'ai':
+                // 請求 AI 分析
+                if (window.aiAssistant) {
+                    await window.aiAssistant.analyzeConflict(currentConflict.users);
+                }
+                break;
+        }
+
+        // 清除警告
+        const warningContainer = document.getElementById('conflictWarning');
+        if (warningContainer) {
+            warningContainer.style.display = 'none';
+        }
+
+        // 清除當前衝突
+        this.activeConflicts.delete('current');
     }
 
     // 顯示 AI 衝突分析
@@ -1124,6 +1174,120 @@ class EditorManager {
         });
 
         console.log(`📂 更新歷史記錄 UI，共 ${history.length} 個項目`);
+    }
+
+    // 初始化事件監聽器
+    initializeEventListeners() {
+        if (!this.editor) return;
+
+        // 監聽編輯器變更
+        this.editor.on('change', (cm, change) => {
+            if (change.origin !== 'setValue' && change.origin !== 'remote') {
+                this.isEditing = true;
+                this.handleLocalCodeChange();
+                
+                // 檢查衝突
+                this.checkConflicts(change);
+            }
+        });
+
+        // 監聽游標活動
+        this.editor.on('cursorActivity', (cm) => {
+            if (this.isEditing) {
+                // 更新協作狀態
+                wsManager.sendMessage({
+                    type: 'editing_status',
+                    userName: wsManager.currentUser,
+                    isEditing: true,
+                    position: cm.getCursor()
+                });
+            }
+        });
+
+        // 監聽失去焦點
+        this.editor.on('blur', () => {
+            this.isEditing = false;
+            // 通知其他用戶停止編輯
+            wsManager.sendMessage({
+                type: 'editing_status',
+                userName: wsManager.currentUser,
+                isEditing: false
+            });
+        });
+    }
+
+    // 檢查代碼衝突
+    checkConflicts(change) {
+        // 獲取變更的行範圍
+        const from = change.from.line;
+        const to = change.to.line + (change.text ? change.text.length - 1 : 0);
+        
+        // 檢查其他用戶是否正在編輯相同的行
+        const conflictingUsers = Array.from(this.collaboratingUsers.values())
+            .filter(user => {
+                if (!user.isEditing || user.userName === wsManager.currentUser) {
+                    return false;
+                }
+                
+                // 檢查是否有重疊的編輯範圍
+                if (user.position) {
+                    const userLine = user.position.line;
+                    // 擴大檢查範圍，包括上下各一行
+                    return userLine >= (from - 1) && userLine <= (to + 1);
+                }
+                return false;
+            });
+
+        if (conflictingUsers.length > 0) {
+            // 觸發衝突警告
+            this.showConflictWarning(conflictingUsers);
+            
+            // 通知其他用戶
+            wsManager.sendMessage({
+                type: 'conflict_detected',
+                users: conflictingUsers.map(u => u.userName),
+                lines: { from, to }
+            });
+            
+            // 如果有AI助教，請求分析
+            if (window.aiAssistant) {
+                window.aiAssistant.analyzeConflict(conflictingUsers);
+            }
+        }
+    }
+
+    // 處理本地代碼變更
+    handleLocalCodeChange() {
+        if (!this.editor || !wsManager.isConnected()) return;
+
+        const code = this.editor.getValue();
+        
+        // 發送代碼變更
+        wsManager.sendMessage({
+            type: 'code_change',
+            code: code,
+            userName: wsManager.currentUser,
+            version: this.codeVersion + 1
+        });
+    }
+
+    // 更新協作用戶狀態
+    updateCollaboratorStatus(userName, status) {
+        if (!this.collaboratingUsers.has(userName)) {
+            this.collaboratingUsers.set(userName, {
+                userName: userName,
+                isEditing: false,
+                position: null
+            });
+        }
+
+        const user = this.collaboratingUsers.get(userName);
+        Object.assign(user, status);
+
+        // 如果用戶停止編輯，清除位置信息
+        if (!status.isEditing) {
+            user.position = null;
+        }
     }
 }
 

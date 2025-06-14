@@ -4,7 +4,101 @@ class ConflictResolverManager {
         this.conflictData = null;
         this.modal = null;
         this.modalElement = null;
+        this.activeConflicts = new Map();
         console.log('🔧 ConflictResolverManager 已創建');
+        this.initializeUI();
+    }
+
+    initializeUI() {
+        // 創建衝突警告容器
+        const warningContainer = document.createElement('div');
+        warningContainer.id = 'conflictWarning';
+        warningContainer.className = 'conflict-warning';
+        document.body.appendChild(warningContainer);
+    }
+
+    // 顯示衝突警告
+    showConflictWarning(conflictingUsers) {
+        const warningContainer = document.getElementById('conflictWarning');
+        if (!warningContainer) return;
+
+        const userNames = conflictingUsers.map(user => user.userName).join('、');
+        
+        warningContainer.innerHTML = `
+            <div class="alert alert-warning alert-dismissible fade show" role="alert">
+                <strong>⚠️ 衝突警告！</strong> 
+                <p>用戶 ${userNames} 正在編輯相同的程式碼區域。</p>
+                <div class="btn-group" role="group">
+                    <button type="button" class="btn btn-success btn-sm" onclick="ConflictResolver.resolveConflict('accept')">
+                        接受修改
+                    </button>
+                    <button type="button" class="btn btn-danger btn-sm" onclick="ConflictResolver.resolveConflict('reject')">
+                        拒絕修改
+                    </button>
+                    <button type="button" class="btn btn-info btn-sm" onclick="ConflictResolver.resolveConflict('share')">
+                        分享到聊天室
+                    </button>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="ConflictResolver.resolveConflict('ai')">
+                        AI 分析
+                    </button>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        `;
+
+        // 顯示警告
+        warningContainer.style.display = 'block';
+        
+        // 儲存當前衝突
+        this.activeConflicts.set('current', {
+            users: conflictingUsers,
+            code: Editor.editor ? Editor.editor.getValue() : ''
+        });
+    }
+
+    // 解決衝突
+    async resolveConflict(action) {
+        const currentConflict = this.activeConflicts.get('current');
+        if (!currentConflict) return;
+
+        switch (action) {
+            case 'accept':
+                // 接受當前修改
+                wsManager.sendMessage({
+                    type: 'conflict_resolved',
+                    resolution: 'accept',
+                    code: Editor.editor ? Editor.editor.getValue() : ''
+                });
+                break;
+
+            case 'reject':
+                // 拒絕當前修改，恢復到衝突前的狀態
+                Editor.editor.setValue(currentConflict.code);
+                break;
+
+            case 'share':
+                // 分享到聊天室
+                chatManager.sendMessage({
+                    type: 'conflict_share',
+                    message: `衝突代碼分享：\n\`\`\`python\n${Editor.editor ? Editor.editor.getValue() : ''}\n\`\`\``,
+                    userName: wsManager.currentUser
+                });
+                break;
+
+            case 'ai':
+                // 請求 AI 分析
+                await aiAssistant.analyzeConflict(currentConflict.users);
+                break;
+        }
+
+        // 清除警告
+        const warningContainer = document.getElementById('conflictWarning');
+        if (warningContainer) {
+            warningContainer.style.display = 'none';
+        }
+
+        // 清除當前衝突
+        this.activeConflicts.delete('current');
     }
 
     // 初始化衝突解決器
@@ -432,112 +526,6 @@ class ConflictResolverManager {
                 if (backdrop) backdrop.remove();
             }
         }
-    }
-
-    // 🆕 解決衝突 - 新增歷史記錄
-    resolveConflict(choice) {
-        console.log('✅ [ConflictResolver] 用戶選擇解決方案:', choice);
-        
-        if (!this.currentConflict) {
-            console.error('❌ 沒有當前衝突數據');
-            return;
-        }
-        
-        const conflictData = this.currentConflict;
-        let resolution;
-        
-        // 根據用戶選擇設置解決方案
-        switch (choice) {
-            case 'accept':
-                // 接受自己的修改
-                console.log('✅ 選擇接受自己的修改解決衝突');
-                resolution = 'accepted_own';
-                // 發送自己的代碼到服務器
-                if (window.Editor) {
-                    window.Editor.sendCodeChange(true);
-                }
-                break;
-            case 'reject':
-                // 接受對方修改
-                if (window.Editor && conflictData.serverCode) {
-                    window.Editor.applyRemoteCode(conflictData.serverCode, conflictData.serverVersion);
-                }
-                console.log('✅ 選擇接受對方修改解決衝突');
-                resolution = 'accepted_other';
-                break;
-            case 'discuss':
-                console.log('✅ 選擇討論解決衝突');
-                resolution = 'discussed';
-                // 打開聊天室進行討論
-                this.openChatForDiscussion();
-                break;
-            case 'ai_analysis':
-                console.log('✅ 請求AI協助分析衝突');
-                this.requestAIAnalysis();
-                return; // 不關閉模態框，等待AI分析結果
-            default:
-                console.warn('⚠️ 未知的衝突解決選項:', choice);
-                resolution = 'unknown';
-                break;
-        }
-        
-        // 記錄衝突歷史
-        try {
-            if (this.lastAIAnalysis) {
-                this.addConflictRecord(conflictData, resolution, this.lastAIAnalysis);
-            } else {
-                this.addConflictRecord(conflictData, resolution);
-            }
-        } catch (error) {
-            console.warn('⚠️ 衝突歷史記錄失敗:', error);
-        }
-        
-        // 關閉模態框
-        this.hideConflictModal();
-        
-        // 通知成功
-        let message;
-        switch (choice) {
-            case 'accept':
-                message = '已接受自己的修改';
-                break;
-            case 'reject':
-                message = '已接受對方修改';
-                break;
-            case 'discuss':
-                message = '已選擇討論解決衝突';
-                break;
-            default:
-                message = '衝突處理完成';
-                break;
-        }
-        
-        if (window.UI && window.UI.showToast) {
-            window.UI.showToast(message, 'success');
-        } else {
-            alert(message);
-        }
-        
-        // 清理衝突狀態
-        this.currentConflict = null;
-        this.lastAIAnalysis = null;
-        this.conflictData = null; // 新增：清理 conflictData
-        
-        // 重置編輯器狀態
-        if (window.Editor) {
-            window.Editor.resetEditingState();
-            window.Editor.setEnabled(true); // 新增：確保編輯器可用
-        }
-        
-        // 移除所有相關模態框
-        const modals = ['conflictModal', 'senderWaitingModal', 'conflictHistoryModal'];
-        modals.forEach(modalId => {
-            const modal = document.getElementById(modalId);
-            if (modal) {
-                const bsModal = bootstrap.Modal.getInstance(modal);
-                if (bsModal) bsModal.hide();
-            }
-        });
     }
 
     // 🎯 AI分析回應處理

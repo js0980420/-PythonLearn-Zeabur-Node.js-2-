@@ -977,6 +977,20 @@
                 console.error('❌ 無法設置預設界面，UI未定義');
             }
         });
+
+        // 初始化聊天功能
+        document.addEventListener('DOMContentLoaded', function() {
+            if (window.Chat) {
+                window.Chat.initialize();
+            }
+        });
+
+        // 全局發送聊天消息函數
+        function globalSendChat() {
+            if (window.Chat) {
+                window.Chat.sendMessage();
+            }
+        }
     </script>
 </body>
 </html> 

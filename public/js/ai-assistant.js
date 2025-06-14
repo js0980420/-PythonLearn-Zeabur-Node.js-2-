@@ -10,6 +10,8 @@ class AIAssistantManager {
         this.isRequesting = false;
         this.lastResponse = '';
         this.chatScrollPosition = 0;
+        this.isAnalyzing = false;
+        this.lastAnalysis = null;
         
         // 映射AI功能到友好的中文名稱
         this.actionNames = {
@@ -107,6 +109,18 @@ class AIAssistantManager {
             this.needsUIRefresh = false;
             console.log('✅ [AI Debug] UI元素初始化完成');
         }
+
+        // 創建 AI 分析結果容器
+        const resultContainer = document.createElement('div');
+        resultContainer.id = 'aiAnalysisResult';
+        resultContainer.className = 'ai-analysis-result';
+        document.body.appendChild(resultContainer);
+
+        // 創建錯誤訊息容器
+        const errorContainer = document.createElement('div');
+        errorContainer.id = 'aiError';
+        errorContainer.className = 'ai-error';
+        document.body.appendChild(errorContainer);
     }
 
     // 動態刷新UI元素（在需要時調用）
@@ -1004,6 +1018,123 @@ class AIAssistantManager {
     showAIIntroduction() {
         this.showResponse(this.getAIIntroduction());
         this.isFirstPrompt = false;
+    }
+
+    // 分析代碼衝突
+    async analyzeConflict(conflictingUsers) {
+        if (this.isAnalyzing) {
+            console.log('⏳ AI 正在分析中，請稍候...');
+            return;
+        }
+
+        try {
+            this.isAnalyzing = true;
+            console.log('🤖 開始 AI 衝突分析...');
+
+            const currentCode = Editor.editor.getValue();
+            const selectedCode = Editor.editor.getSelection();
+            
+            // 準備衝突分析請求
+            const response = await this.sendRequest('analyze_conflict', {
+                code: currentCode,
+                selectedCode: selectedCode,
+                conflictingUsers: conflictingUsers.map(user => user.userName),
+                currentUser: wsManager.currentUser,
+                timestamp: Date.now()
+            });
+
+            // 顯示分析結果
+            if (response && response.analysis) {
+                this.lastAnalysis = response.analysis;
+                this.showAnalysisResult(response.analysis, '衝突分析');
+                
+                // 通知其他用戶
+                wsManager.sendMessage({
+                    type: 'ai_analysis_complete',
+                    analysis: response.analysis,
+                    users: conflictingUsers.map(user => user.userName)
+                });
+            }
+        } catch (error) {
+            console.error('❌ AI 衝突分析失敗:', error);
+            this.showError('AI 衝突分析失敗，請稍後再試');
+        } finally {
+            this.isAnalyzing = false;
+        }
+    }
+
+    // 發送 AI 請求
+    async sendRequest(type, data) {
+        try {
+            const response = await fetch('/api/ai/analyze', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    type: type,
+                    ...data
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('❌ AI 請求失敗:', error);
+            throw error;
+        }
+    }
+
+    // 顯示分析結果
+    showAnalysisResult(analysis, title = '分析結果') {
+        const resultContainer = document.getElementById('aiAnalysisResult');
+        if (!resultContainer) return;
+
+        // 更新 UI
+        resultContainer.innerHTML = `
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">${title}</h5>
+                </div>
+                <div class="card-body">
+                    <pre class="analysis-content">${analysis}</pre>
+                </div>
+                <div class="card-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="aiAssistant.hideAnalysisResult()">
+                        關閉
+                    </button>
+                </div>
+            </div>
+        `;
+
+        // 顯示結果區域
+        resultContainer.style.display = 'block';
+        resultContainer.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // 隱藏分析結果
+    hideAnalysisResult() {
+        const resultContainer = document.getElementById('aiAnalysisResult');
+        if (resultContainer) {
+            resultContainer.style.display = 'none';
+        }
+    }
+
+    // 顯示錯誤訊息
+    showError(message) {
+        const errorContainer = document.getElementById('aiError');
+        if (!errorContainer) return;
+
+        errorContainer.innerHTML = `
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        `;
+        errorContainer.style.display = 'block';
     }
 }
 
