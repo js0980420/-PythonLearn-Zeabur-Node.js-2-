@@ -393,60 +393,80 @@
     <!-- Google Diff Match Patch 庫 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/diff_match_patch/20121119/diff_match_patch.js"></script>
     
-    <!-- 模組化JS檔案 (確保路徑相對於public目錄是正確的) -->
-    <script src="js/websocket.js"></script>
-    <script src="js/ui.js"></script>
-    <script src="js/editor.js"></script>
-    <script src="js/chat.js"></script>
-    <script src="js/ai-assistant.js"></script>
-    <script src="js/conflict.js"></script>
-    <script src="js/save-load.js"></script>
+    <!-- 基礎庫 -->
+    <script src="lib/codemirror/lib/codemirror.js"></script>
+    <script src="lib/codemirror/mode/python/python.js"></script>
+    <script src="lib/codemirror/addon/edit/closebrackets.js"></script>
+    <script src="lib/codemirror/addon/edit/matchbrackets.js"></script>
+    <script src="lib/codemirror/addon/selection/active-line.js"></script>
+    <script src="lib/codemirror/addon/display/placeholder.js"></script>
     
+    <!-- 核心模組 -->
+    <script src="js/editor.js"></script>
+    <script src="js/websocket.js"></script>
+    <script src="js/save-load.js"></script>
+    <script src="js/chat.js"></script>
+    <script src="js/ui.js"></script>
+    
+    <!-- 初始化腳本 -->
     <script>
+        // 確保所有必要的組件都已載入
+        function checkDependencies() {
+            const dependencies = [
+                'editorManager',
+                'wsManager',
+                'saveLoadManager',
+                'uiManager'
+            ];
+            
+            const missing = dependencies.filter(dep => !window[dep]);
+            
+            if (missing.length > 0) {
+                console.error('❌ 缺少必要組件:', missing);
+                return false;
+            }
+            
+            return true;
+        }
+        
         // 等待 DOM 完全載入
         document.addEventListener('DOMContentLoaded', async function() {
             console.log('🚀 頁面初始化開始...');
             
+            // 檢查依賴項
+            if (!checkDependencies()) {
+                console.error('❌ 必要組件未完全載入，等待 3 秒後重試...');
+                setTimeout(() => location.reload(), 3000);
+                return;
+            }
+            
             try {
                 // 初始化編輯器
-                if (window.editorManager) {
-                    await editorManager.initialize();
-                    console.log('✅ 編輯器初始化完成');
-                } else {
-                    throw new Error('編輯器管理器未找到');
-                }
+                await editorManager.initialize();
+                console.log('✅ 編輯器初始化完成');
                 
                 // 初始化 WebSocket
-                if (window.wsManager) {
-                    await wsManager.connect();
-                    console.log('✅ WebSocket 連接成功');
-                } else {
-                    throw new Error('WebSocket 管理器未找到');
-                }
+                await wsManager.connect();
+                console.log('✅ WebSocket 連接成功');
                 
                 // 初始化存儲管理器
-                if (window.saveLoadManager) {
-                    const userData = {
-                        userName: wsManager.currentUser,
-                        roomName: wsManager.currentRoom
-                    };
-                    saveLoadManager.initialize(userData);
-                    console.log('✅ 存儲管理器初始化完成');
-                } else {
-                    throw new Error('存儲管理器未找到');
-                }
+                const userData = {
+                    userName: wsManager.currentUser,
+                    roomName: wsManager.currentRoom
+                };
+                saveLoadManager.initialize(userData);
+                console.log('✅ 存儲管理器初始化完成');
                 
                 // 初始化 UI
-                if (window.uiManager) {
-                    uiManager.initialize();
-                    console.log('✅ UI 初始化完成');
-                }
+                uiManager.initialize();
+                console.log('✅ UI 初始化完成');
                 
                 console.log('🎉 所有組件初始化完成');
                 
             } catch (error) {
                 console.error('❌ 初始化過程中發生錯誤:', error);
-                alert('初始化失敗，請重新載入頁面');
+                console.log('⚠️ 3秒後自動重新載入頁面...');
+                setTimeout(() => location.reload(), 3000);
             }
         });
         

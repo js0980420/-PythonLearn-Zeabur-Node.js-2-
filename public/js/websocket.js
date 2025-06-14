@@ -762,8 +762,8 @@ class WebSocketManager {
     }
 }
 
-// 全局 WebSocket 管理器實例
-const wsManager = new WebSocketManager(); 
+// 創建全局 WebSocket 管理器實例
+window.wsManager = new WebSocketManager();
 
-// 暴露到全域 window 對象
-window.wsManager = wsManager; 
+// 導出 WebSocket 管理器類
+window.WebSocketManager = WebSocketManager; 

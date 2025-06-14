@@ -1338,9 +1338,8 @@ class EditorManager {
     }
 }
 
-// 全局編輯器管理器實例
-const Editor = new EditorManager(); 
+// 創建全局編輯器管理器實例
+window.editorManager = new EditorManager();
 
-// 確保全域可訪問性 - 修復WebSocket訪問問題
-window.Editor = Editor;
-console.log('✅ 全域編輯器實例已創建並設置到 window.Editor:', window.Editor); 
+// 導出編輯器管理器類
+window.EditorManager = EditorManager; 
