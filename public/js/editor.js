@@ -348,42 +348,57 @@ class EditorManager {
         console.log('📨 收到遠程代碼變更:', message);
         
         try {
-            // 直接設置編輯器的值
-            if (this.editor) {
-                // 保存當前游標位置和選擇範圍
-                const currentCursor = this.editor.selection.getCursor();
-                const currentSelection = this.editor.selection.getRange();
-                
-                // 更新代碼
-                this.editor.setValue(message.code || '');
-                
-                // 更新版本號
-                if (message.version !== undefined) {
-                    this.codeVersion = message.version;
-                    this.updateVersionDisplay();
-                }
-                
-                // 如果是其他用戶的更新，恢復游標位置和選擇範圍
-                if (message.userName !== wsManager.currentUser) {
+            // 檢查編輯器實例是否存在且已初始化
+            if (!this.editor) {
+                throw new Error('編輯器實例不存在');
+            }
+
+            let currentPosition = null;
+            let currentSelection = null;
+
+            // 安全地獲取當前游標位置
+            try {
+                currentPosition = {
+                    row: this.editor.getCursorPosition().row,
+                    column: this.editor.getCursorPosition().column
+                };
+                currentSelection = this.editor.getSelection().getRange();
+            } catch (e) {
+                console.warn('無法獲取游標位置:', e);
+            }
+            
+            // 更新代碼
+            this.editor.setValue(message.code || '', -1); // -1 表示將游標移到開頭
+            
+            // 更新版本號
+            if (message.version !== undefined) {
+                this.codeVersion = message.version;
+                this.updateVersionDisplay();
+            }
+            
+            // 如果是其他用戶的更新且成功獲取了之前的游標位置，則恢復它
+            if (message.userName !== wsManager.currentUser && currentPosition) {
+                try {
                     // 確保游標位置在有效範圍內
                     const lines = this.editor.session.getLength();
-                    if (currentCursor.row < lines) {
-                        this.editor.selection.moveTo(
-                            currentCursor.row,
-                            Math.min(currentCursor.column, this.editor.session.getLine(currentCursor.row).length)
+                    if (currentPosition.row < lines) {
+                        const lineLength = this.editor.session.getLine(currentPosition.row).length;
+                        this.editor.moveCursorTo(
+                            currentPosition.row,
+                            Math.min(currentPosition.column, lineLength)
                         );
                         
                         // 如果有選擇範圍，也恢復它
-                        if (!currentSelection.isEmpty()) {
-                            this.editor.selection.setRange(currentSelection);
+                        if (currentSelection && !currentSelection.isEmpty()) {
+                            this.editor.getSelection().setRange(currentSelection);
                         }
                     }
+                } catch (e) {
+                    console.warn('無法恢復游標位置:', e);
                 }
-                
-                console.log('✅ 已更新代碼，版本:', message.version);
-            } else {
-                console.error('❌ 編輯器實例不存在');
             }
+            
+            console.log('✅ 已更新代碼，版本:', message.version);
             
             // 可選：顯示提示
             if (window.UI && message.userName !== wsManager.currentUser) {
