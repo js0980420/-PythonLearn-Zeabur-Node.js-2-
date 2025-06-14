@@ -81,37 +81,6 @@
         }
         
         /* 更多必要的基礎樣式可以在這裡添加，以減少對外部CSS文件的依賴，並確保JS控制的樣式有基礎 */
-        
-        /* 衝突預警樣式 */
-        .conflict-warning {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 1000;
-            max-width: 400px;
-        }
-        
-        .operation-menu {
-            position: absolute;
-            top: 100%;
-            right: 0;
-            z-index: 1000;
-            min-width: 200px;
-            margin-top: 5px;
-        }
-        
-        .operation-menu .card {
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-        }
-        
-        .operation-menu .btn {
-            width: 100%;
-            text-align: left;
-        }
-        
-        .d-none {
-            display: none !important;
-        }
     </style>
 </head>
 <body>
@@ -276,7 +245,7 @@
                                 <button class="btn btn-outline-warning" onclick="globalAskAI('check_errors')"><i class="fas fa-bug"></i> 檢查錯誤</button>
                                 <button class="btn btn-outline-success" onclick="globalAskAI('improvement_tips')"><i class="fas fa-lightbulb"></i> 改進建議</button>
                                 <button class="btn btn-outline-dark" onclick="globalAskAI('run_code')"><i class="fas fa-play"></i> 運行代碼</button>
-                                <button class="btn btn-outline-danger" onclick="globalTestConflictAnalysis()"><i class="fas fa-code-branch"></i> 衝突分析</button>
+                                <button class="btn btn-outline-danger" onclick="globalShowConflictSimulation()"><i class="fas fa-code-branch"></i> 衝突模擬</button>
                                 <button class="btn btn-outline-primary" onclick="globalShowTutorial()"><i class="fas fa-question-circle"></i> 操作教學</button>
                             </div>
                             <div id="aiResponse" class="p-2" style="min-height: 200px; background: #f8f9fa;"></div>
@@ -386,110 +355,349 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/python/python.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/closebrackets.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/matchbrackets.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/comment/comment.min.js"></script>
     
-    <!-- Google Diff Match Patch 庫 -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/diff_match_patch/20121119/diff_match_patch.js"></script>
-    
-    <!-- 基礎庫 -->
-    <script src="lib/codemirror/lib/codemirror.js"></script>
-    <script src="lib/codemirror/mode/python/python.js"></script>
-    <script src="lib/codemirror/addon/edit/closebrackets.js"></script>
-    <script src="lib/codemirror/addon/edit/matchbrackets.js"></script>
-    <script src="lib/codemirror/addon/selection/active-line.js"></script>
-    <script src="lib/codemirror/addon/display/placeholder.js"></script>
-    
-    <!-- 核心模組 -->
-    <script src="js/editor.js"></script>
+    <!-- 模組化JS檔案 (確保路徑相對於public目錄是正確的) -->
     <script src="js/websocket.js"></script>
-    <script src="js/save-load.js"></script>
-    <script src="js/chat.js"></script>
     <script src="js/ui.js"></script>
+    <script src="js/editor.js"></script>
+    <script src="js/chat.js"></script>
+    <script src="js/ai-assistant.js"></script>
+    <script src="js/conflict.js"></script>
+    <script src="js/save-load.js"></script>
     
-    <!-- 初始化腳本 -->
     <script>
-        // 確保所有必要的組件都已載入
-        function checkDependencies() {
-            const dependencies = [
-                'editorManager',
-                'wsManager',
-                'saveLoadManager',
-                'uiManager'
-            ];
+        // 全域事件處理函數 (避免HTML中的onclick直接調用模組內部方法導致可能的初始化順序問題)
+        function globalJoinRoom() { if(UI) UI.joinRoom(); else console.error("UI not ready"); }
+        function globalLeaveRoom() { if(UI) UI.leaveRoom(); else console.error("UI not ready"); }
+        function globalLoadCode(loadType) { 
+            console.log('🔄 全域載入函數被調用:', loadType);
+            if (window.SaveLoadManager) {
+                if (loadType === 'latest') {
+                    window.SaveLoadManager.loadLatestCode();
+                } else {
+                    window.SaveLoadManager.showLoadDialog();
+                }
+            } else {
+                console.error('❌ SaveLoadManager 未初始化');
+                alert('載入功能尚未準備好，請稍後再試');
+            }
+        }
+        function globalSaveCode() { 
+            console.log('💾 全域保存函數被調用');
+            if (window.SaveLoadManager) {
+                window.SaveLoadManager.saveCode();
+            } else if (Editor) {
+                // 降級到編輯器的保存功能
+                Editor.saveCode(); 
+            } else {
+                console.error('❌ 保存功能未準備好');
+                alert('保存功能尚未準備好，請稍後再試');
+            }
+        }
+        function globalSaveToSlot(slotNumber) {
+            console.log('💾 保存到槽位:', slotNumber);
+            if (window.SaveLoadManager) {
+                window.SaveLoadManager.saveToSlot(slotNumber);
+            } else {
+                console.error('❌ SaveLoadManager 未初始化');
+                alert('保存功能尚未準備好，請稍後再試');
+            }
+        }
+        function globalLoadFromSlot(slotNumber) {
+            console.log('📂 從槽位載入:', slotNumber);
+            if (window.SaveLoadManager) {
+                window.SaveLoadManager.loadFromSlot(slotNumber);
+            } else {
+                console.error('❌ SaveLoadManager 未初始化');
+                alert('載入功能尚未準備好，請稍後再試');
+            }
+        }
+        function globalRunCode() { if(Editor) Editor.runCode(); else console.error("Editor not ready"); }
+        function globalClearOutput() { if(Editor) Editor.clearOutput(); else console.error("Editor not ready"); }
+        function globalSwitchToAI() { if(UI) UI.switchToAI(); else console.error("UI not ready"); }
+        function globalSwitchToChat() { if(UI) UI.switchToChat(); else console.error("UI not ready"); }
+        // AI相關的全域函數現在在ai-assistant.js中定義
+        function globalSendChat() { if(Chat) Chat.sendMessage(); else console.error("Chat not ready"); }
+        function globalResolveConflict(action) { if(ConflictResolver) ConflictResolver.resolveConflict(action); else console.error("ConflictResolver not ready"); }
+        // globalAskAIForConflictHelp 函數已移到 conflict.js 中
+        function globalTestConflictAnalysis() { 
+            console.log('🧪 執行衝突分析測試');
             
-            const missing = dependencies.filter(dep => !window[dep]);
+            // 顯示衝突分析選項模態框
+            showConflictAnalysisOptions();
+        }
+        function globalOpenTeacherDashboard() { window.open('/teacher', '_blank'); }
+        function globalShowTutorial() { if(UI) UI.showTutorial(); else console.error("UI not ready"); }
+        
+        // 新增的檔案操作功能
+        function globalCopyCode() { if(Editor) Editor.copyCode(); else console.error("Editor not ready"); }
+        function globalDownloadCode() { if(Editor) Editor.downloadCode(); else console.error("Editor not ready"); }
+        function globalImportCode() { if(Editor) Editor.importCode(); else console.error("Editor not ready"); }
+        function globalHandleFileImport(event) { if(Editor) Editor.handleFileImport(event); else console.error("Editor not ready"); }
+
+        // 顯示衝突模擬選項
+        function globalShowConflictSimulation() {
+            const modalHTML = `
+                <div class="modal fade" id="conflictSimulationModal" tabindex="-1">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header bg-danger text-white">
+                                <h5 class="modal-title">
+                                    <i class="fas fa-code-branch"></i> 衝突模擬分析
+                                </h5>
+                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle"></i> 
+                                    選擇一個操作，AI 將分析可能產生的衝突並提供建議。
+                                </div>
+                                
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <div class="card h-100">
+                                            <div class="card-body">
+                                                <h6 class="card-title">
+                                                    <i class="fas fa-file-import text-primary"></i> 
+                                                    導入操作
+                                                </h6>
+                                                <p class="card-text small text-muted">
+                                                    模擬導入新檔案可能造成的衝突
+                                                </p>
+                                                <button class="btn btn-outline-primary btn-sm w-100" 
+                                                    onclick="simulateConflict('import')">
+                                                    <i class="fas fa-play"></i> 模擬導入
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="col-md-6">
+                                        <div class="card h-100">
+                                            <div class="card-body">
+                                                <h6 class="card-title">
+                                                    <i class="fas fa-sync-alt text-success"></i> 
+                                                    載入操作
+                                                </h6>
+                                                <p class="card-text small text-muted">
+                                                    模擬載入其他版本可能造成的衝突
+                                                </p>
+                                                <button class="btn btn-outline-success btn-sm w-100" 
+                                                    onclick="simulateConflict('load')">
+                                                    <i class="fas fa-play"></i> 模擬載入
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="col-md-6">
+                                        <div class="card h-100">
+                                            <div class="card-body">
+                                                <h6 class="card-title">
+                                                    <i class="fas fa-users text-warning"></i> 
+                                                    多人編輯
+                                                </h6>
+                                                <p class="card-text small text-muted">
+                                                    模擬多人同時編輯的衝突情況
+                                                </p>
+                                                <button class="btn btn-outline-warning btn-sm w-100" 
+                                                    onclick="simulateConflict('concurrent')">
+                                                    <i class="fas fa-play"></i> 模擬多人編輯
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="col-md-6">
+                                        <div class="card h-100">
+                                            <div class="card-body">
+                                                <h6 class="card-title">
+                                                    <i class="fas fa-random text-info"></i> 
+                                                    自定義模擬
+                                                </h6>
+                                                <p class="card-text small text-muted">
+                                                    自定義衝突場景進行模擬
+                                                </p>
+                                                <button class="btn btn-outline-info btn-sm w-100" 
+                                                    onclick="simulateConflict('custom')">
+                                                    <i class="fas fa-play"></i> 自定義模擬
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div id="simulationResult" class="mt-4" style="display: none;">
+                                    <div class="card">
+                                        <div class="card-header bg-info text-white">
+                                            <i class="fas fa-robot"></i> AI 分析結果
+                                        </div>
+                                        <div class="card-body" id="aiAnalysisContent">
+                                            <!-- AI 分析結果將在這裡顯示 -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
             
-            if (missing.length > 0) {
-                console.error('❌ 缺少必要組件:', missing);
-                return false;
+            // 移除舊的模態框（如果存在）
+            const existingModal = document.getElementById('conflictSimulationModal');
+            if (existingModal) {
+                existingModal.remove();
             }
             
-            return true;
-        }
-        
-        // 等待 DOM 完全載入
-        document.addEventListener('DOMContentLoaded', async function() {
-            console.log('🚀 頁面初始化開始...');
+            // 添加新的模態框
+            document.body.insertAdjacentHTML('beforeend', modalHTML);
             
-            // 檢查依賴項
-            if (!checkDependencies()) {
-                console.error('❌ 必要組件未完全載入，等待 3 秒後重試...');
-                setTimeout(() => location.reload(), 3000);
-                return;
+            // 顯示模態框
+            const modal = new bootstrap.Modal(document.getElementById('conflictSimulationModal'));
+            modal.show();
+        }
+
+        // 模擬衝突
+        async function simulateConflict(type) {
+            console.log('🔄 開始模擬衝突:', type);
+            
+            const currentCode = Editor.getCode();
+            let simulationContext = {
+                type: type,
+                code: currentCode,
+                user: wsManager.currentUser,
+                room: wsManager.currentRoom
+            };
+            
+            // 根據不同類型添加額外信息
+            switch(type) {
+                case 'import':
+                    simulationContext.operation = '導入新檔案';
+                    simulationContext.scenario = '當其他用戶正在編輯時導入新檔案';
+                    break;
+                case 'load':
+                    simulationContext.operation = '載入其他版本';
+                    simulationContext.scenario = '當其他用戶正在編輯時載入歷史版本';
+                    break;
+                case 'concurrent':
+                    simulationContext.operation = '多人同時編輯';
+                    simulationContext.scenario = '多個用戶同時修改相同的代碼區域';
+                    break;
+                case 'custom':
+                    simulationContext.operation = '自定義場景';
+                    simulationContext.scenario = '用戶自定義的衝突場景';
+                    break;
             }
             
             try {
-                // 初始化編輯器
-                await editorManager.initialize();
-                console.log('✅ 編輯器初始化完成');
-                
-                // 初始化 WebSocket
-                await wsManager.connect();
-                console.log('✅ WebSocket 連接成功');
-                
-                // 初始化存儲管理器
-                const userData = {
-                    userName: wsManager.currentUser,
-                    roomName: wsManager.currentRoom
+                // 發送到服務器進行 AI 分析
+                const message = {
+                    type: 'ai_request',
+                    action: 'simulate_conflict',
+                    context: simulationContext
                 };
-                saveLoadManager.initialize(userData);
-                console.log('✅ 存儲管理器初始化完成');
                 
-                // 初始化 UI
-                uiManager.initialize();
-                console.log('✅ UI 初始化完成');
+                await wsManager.sendMessage(message);
                 
-                console.log('🎉 所有組件初始化完成');
+                // 顯示載入中提示
+                document.getElementById('simulationResult').style.display = 'block';
+                document.getElementById('aiAnalysisContent').innerHTML = `
+                    <div class="text-center py-3">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2 mb-0">AI 正在分析可能的衝突情況...</p>
+                    </div>
+                `;
                 
             } catch (error) {
-                console.error('❌ 初始化過程中發生錯誤:', error);
-                console.log('⚠️ 3秒後自動重新載入頁面...');
-                setTimeout(() => location.reload(), 3000);
+                console.error('❌ 模擬請求失敗:', error);
+                UI.showErrorToast('模擬請求失敗，請稍後再試');
+            }
+        }
+
+        // DOMContentLoaded 事件處理
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('🚀 Python多人協作教學平台載入完成');
+            
+            // 初始化所有模組
+            console.log('🚀 初始化所有模組...');
+            
+            // 初始化UI模組
+            if (typeof UI !== 'undefined' && UI.initialize) {
+                UI.initialize();
+                console.log('✅ UI模組初始化完成');
+            } else {
+                console.error('❌ UI模組初始化失敗');
+            }
+            
+            // 初始化編輯器模組
+            if (typeof Editor !== 'undefined' && Editor.initialize) {
+                Editor.initialize();
+                console.log('✅ 編輯器模組初始化完成');
+                
+                // 🔧 額外的編輯器檢查和修復
+                setTimeout(() => {
+                    if (window.Editor && window.Editor.editor) {
+                        const cm = window.Editor.editor;
+                        
+                        // 檢查編輯器狀態
+                        console.log('🔍 編輯器狀態檢查:');
+                        console.log('   - 編輯器存在:', !!cm);
+                        console.log('   - 只讀模式:', cm.getOption('readOnly'));
+                        console.log('   - 已聚焦:', cm.hasFocus());
+                        
+                        // 確保編輯器可以輸入
+                        cm.setOption('readOnly', false);
+                        cm.refresh();
+                        cm.focus();
+                        
+                        // 測試輸入功能
+                        cm.setValue('# 歡迎使用 Python 協作編輯器\n# 您可以開始輸入代碼...\n\n');
+                        
+                        console.log('✅ 編輯器已準備就緒，可以開始輸入');
+                    } else {
+                        console.error('❌ 編輯器對象不存在');
+                    }
+                }, 200);
+            } else {
+                console.error('❌ 編輯器模組初始化失敗');
+            }
+            
+            // 初始化WebSocket管理器
+            if (typeof window.wsManager !== 'undefined') {
+                // WebSocket管理器已準備就緒
+                console.log('✅ WebSocket管理器已準備就緒');
+            } else {
+                console.error('❌ WebSocket管理器未載入');
+            }
+            
+            // 初始化AI助教
+            if (typeof AIAssistant !== 'undefined' && AIAssistant.initialize) {
+                AIAssistant.initialize();
+                console.log('✅ AI助教模組初始化完成');
+            } else {
+                console.error('❌ AI助教模組初始化失敗');
+            }
+            
+            // 初始化聊天系統
+            if (typeof Chat !== 'undefined' && Chat.initialize) {
+                Chat.initialize();
+                console.log('✅ 聊天系統初始化完成');
+            } else {
+                console.error('❌ 聊天系統初始化失敗');
+            }
+            
+            console.log('✨ 模組初始化完成');
+            
+            // 預設顯示AI助教
+            if (typeof UI !== 'undefined' && UI.switchToAI) {
+                UI.switchToAI();
+                console.log('✅ AI助教已設為預設顯示');
+            } else {
+                console.error('❌ 無法設置預設界面，UI未定義');
             }
         });
-        
-        // 全局載入函數
-        async function globalExecuteSlotLoad(slotId) {
-            console.log(`🔍 調用槽位載入: ${slotId}`);
-            
-            try {
-                if (!window.saveLoadManager) {
-                    throw new Error('存儲管理器未初始化');
-                }
-                
-                const success = await saveLoadManager.globalExecuteSlotLoad(slotId);
-                
-                if (!success) {
-                    console.log('⚠️ 載入失敗，3秒後重試...');
-                    setTimeout(() => globalExecuteSlotLoad(slotId), 3000);
-                }
-            } catch (error) {
-                console.error('❌ 載入過程中發生錯誤:', error);
-                alert('載入失敗，請稍後重試');
-            }
-        }
     </script>
 </body>
 </html> 

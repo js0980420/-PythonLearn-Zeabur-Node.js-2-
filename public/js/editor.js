@@ -11,9 +11,6 @@ class EditorManager {
         this.codeHistory = JSON.parse(localStorage.getItem('codeHistory') || '[]');
         this.maxHistorySize = 10;
         this.lastRemoteChangeTime = null;
-        this.activeConflicts = new Map();
-        this.pendingRemoteChange = null;
-        this.suppressEvents = false;
         
         console.log('🔧 編輯器管理器已創建，初始版本號:', this.codeVersion);
     }
@@ -36,10 +33,7 @@ class EditorManager {
             autoCloseBrackets: true,
             matchBrackets: true,
             lineWrapping: true,
-            // 禁用所有自動游標相關設置
-            autofocus: false,
-            cursorBlinkRate: 530,
-            resetSelectionOnContextMenu: false,
+            autofocus: true, // 添加自動聚焦
             extraKeys: {
                 "Ctrl-S": (cm) => {
                     this.saveCode();
@@ -63,13 +57,10 @@ class EditorManager {
             return;
         }
 
-        // 初始化事件監聽 - 移到最前面
-        this.initializeEventListeners();
-
         // 動態設置編輯器樣式
         this.setupEditorStyles();
 
-        // 統一編輯狀態管理
+        // 統一編輯狀態管理 - 只在這裡設置，避免重複
         this.setupEditingStateTracking();
 
         // 設置自動保存 - 5分鐘一次
@@ -77,15 +68,13 @@ class EditorManager {
         
         // 載入歷史記錄
         this.loadHistoryFromStorage();
-        
-        // 初始化衝突分析按鈕
-        this.initConflictAnalysisButton();
 
-        // 只刷新編輯器，不設置焦點和游標位置
+        // 💡 確保編輯器可以輸入 - 延遲聚焦
         setTimeout(() => {
             if (this.editor) {
                 this.editor.refresh();
-                console.log('✅ 編輯器已刷新，準備就緒');
+                this.editor.focus();
+                console.log('✅ 編輯器已聚焦，可以開始輸入');
             }
         }, 100);
 
@@ -251,26 +240,8 @@ class EditorManager {
 
     // 重置編輯狀態
     resetEditingState() {
-        if (!this.isEditing) return;
-        
-        console.log('🔄 重置編輯狀態');
         this.isEditing = false;
-        
-        // 檢查是否有暫存的遠程更新
-        if (this.pendingRemoteChange) {
-            console.log('📥 應用暫存的遠程更新');
-            const change = this.pendingRemoteChange;
-            this.pendingRemoteChange = null;
-            this.handleRemoteCodeChange(change);
-        }
-        
-        // 通知其他用戶
-        if (wsManager && wsManager.isConnected()) {
-            wsManager.sendMessage({
-                type: 'editing_status',
-                isEditing: false
-            });
-        }
+        console.log('🔄 編輯狀態已重置: isEditing = false');
     }
 
     // 保存代碼到歷史記錄
@@ -371,85 +342,39 @@ class EditorManager {
         }
     }
 
-    // 處理遠程代碼變更
+    // 處理遠端代碼變更
     handleRemoteCodeChange(message) {
-        const { code, version, userName, userId } = message;
-        console.log(`📥 處理遠程代碼變更 - 版本: ${version}, 用戶: ${userName}`);
-        
-        // 如果是系統消息，強制更新
-        const isSystemMessage = userId === 'system';
-        
-        // 檢查版本號
-        if (version <= this.codeVersion && !isSystemMessage) {
-            console.log(`⏭️ 忽略舊版本更新: ${version} <= ${this.codeVersion}`);
-            return;
-        }
-        
-        // 如果用戶正在編輯且不是系統消息，暫存更新
-        if (this.isEditing && !isSystemMessage) {
-            console.log('⚠️ 用戶正在編輯，暫存遠程更新');
-            this.pendingRemoteChange = message;
-            return;
-        }
-        
-        // 更新代碼
-        this.applyCodeChange(code, version);
-    }
-    
-    // 應用代碼變更
-    applyCodeChange(code, version) {
-        console.log(`📝 應用代碼變更 - 版本: ${version}`);
+        console.log('📨 收到遠程代碼變更:', message);
         
         try {
-            // 暫時禁用事件處理
-            this.suppressEvents = true;
+            // 直接設置編輯器的值
+            if (this.editor) {
+                // 保存當前游標位置
+                const currentPosition = this.editor.getCursor();
+                
+                // 更新代碼
+                this.editor.setValue(message.code || '');
+                
+                // 更新版本號
+                if (message.version !== undefined) {
+                    this.codeVersion = message.version;
+                    this.updateVersionDisplay();
+                }
+                
+                // 恢復游標位置
+                this.editor.setCursor(currentPosition);
+                
+                console.log('✅ 已更新代碼，版本:', message.version);
+            } else {
+                console.error('❌ 編輯器實例不存在');
+            }
             
-            // 保存當前游標位置
-            const cursor = this.editor.getCursor();
-            const scrollInfo = this.editor.getScrollInfo();
-            
-            // 更新代碼
-            this.editor.setValue(code);
-            this.codeVersion = version;
-            
-            // 恢復游標位置
-            this.editor.setCursor(cursor);
-            this.editor.scrollTo(scrollInfo.left, scrollInfo.top);
-            
-            // 重新啟用事件處理
-            this.suppressEvents = false;
-            
-            console.log('✅ 代碼更新成功');
+            // 可選：顯示提示
+            if (window.UI && message.userName !== wsManager.currentUser) {
+                window.UI.showInfoToast(`${message.userName} 更新了代碼`);
+            }
         } catch (error) {
-            console.error('❌ 代碼更新失敗:', error);
-            this.suppressEvents = false;
-        }
-    }
-    
-    // 處理本地代碼變更
-    handleLocalCodeChange() {
-        if (this.suppressEvents) return;
-        
-        const currentCode = this.editor.getValue();
-        this.codeVersion++;
-        
-        console.log(`📝 本地代碼變更 - 版本: ${this.codeVersion}`);
-        
-        // 發送變更到服務器
-        if (wsManager && wsManager.isConnected()) {
-            wsManager.sendMessage({
-                type: 'code_change',
-                code: currentCode,
-                version: this.codeVersion
-            });
-        }
-        
-        // 如果有暫存的遠程更新，檢查是否可以應用
-        if (this.pendingRemoteChange && !this.isEditing) {
-            console.log('🔄 處理暫存的遠程更新');
-            const change = this.pendingRemoteChange;
-            this.pendingRemoteChange = null;
-            this.handleRemoteCodeChange(change);
+            console.error('❌ 更新代碼時發生錯誤:', error);
         }
     }
 
@@ -654,41 +579,24 @@ class EditorManager {
     // 設置代碼
     setCode(code, version = null) {
         if (this.editor) {
-            // 如果正在編輯，不要打斷用戶
-            if (this.isEditing) {
-                console.log('⚠️ 用戶正在編輯，暫不更新代碼');
-                return;
+            // 暫時停用編輯狀態檢測，避免觸發遠程更新
+            const wasEditing = this.isEditing;
+            this.isEditing = false;
+            
+            // 設置代碼內容
+            this.editor.setValue(code || '');
+            
+            // 更新版本號
+            if (version !== null) {
+                this.codeVersion = version;
+                this.updateVersionDisplay();
+                console.log(`✅ 代碼已設置 - 長度: ${(code || '').length}, 版本: ${this.codeVersion}`);
             }
             
-            try {
-                // 保存當前游標和滾動位置
-                const cursor = this.editor.getCursor();
-                const scroll = this.editor.getScrollInfo();
-                
-                // 獲取當前內容範圍
-                const lastLine = this.editor.lastLine();
-                const lastCh = this.editor.getLine(lastLine).length;
-                
-                // 使用 replaceRange 更新內容
-                this.editor.replaceRange(
-                    code || '',
-                    {line: 0, ch: 0},
-                    {line: lastLine, ch: lastCh}
-                );
-                
-                // 立即恢復游標和滾動位置
-                this.editor.setCursor(cursor);
-                this.editor.scrollTo(scroll.left, scroll.top);
-                
-                // 更新版本號
-                if (version !== null) {
-                    this.codeVersion = version;
-                    this.updateVersionDisplay();
-                    console.log(`✅ 代碼已設置 - 長度: ${(code || '').length}, 版本: ${this.codeVersion}`);
-                }
-            } catch (error) {
-                console.error('設置代碼時發生錯誤:', error);
-            }
+            // 恢復編輯狀態（如果之前在編輯）
+            setTimeout(() => {
+                this.isEditing = wasEditing;
+            }, 100);
         }
     }
 
@@ -720,114 +628,88 @@ class EditorManager {
         }
     }
 
-    // 強化編輯狀態管理 - 簡化且穩定的編輯狀態追蹤
+    // 編輯狀態管理
     setupEditingStateTracking() {
-        console.log('🔧 設置強化編輯狀態追蹤系統 (V2 - 更敏感)');
+        console.log('🔧 設置編輯狀態追蹤系統');
         
-        // 1. 主要編輯事件監聽 - 擴大觸發範圍
+        // 1. 主要編輯事件監聽
         this.editor.on('change', (cm, change) => {
-            console.log('📝 代碼變更事件 - 來源:', change.origin);
-            
-            // 🔧 擴大用戶編輯行為檢測範圍
             const userEditOrigins = ['+input', 'paste', '+delete', '*compose', 'cut'];
             const isUserEdit = userEditOrigins.includes(change.origin);
             
             if (isUserEdit) {
-                // 用戶開始編輯
                 this.isEditing = true;
                 this.editStartTime = Date.now();
-                console.log('✏️ 編輯狀態已激活 (來源:', change.origin, ')');
                 
-                // 🔧 立即重置編輯超時（縮短到5秒）
-                this.resetEditingTimeout();
-                
-                // 延遲發送代碼變更
                 clearTimeout(this.changeTimeout);
                 this.changeTimeout = setTimeout(() => {
                     if (this.isEditing) {
+                        // 保存當前游標位置
+                        const currentPosition = this.editor.getCursor();
                         this.sendCodeChange();
+                        // 恢復游標位置
+                        this.editor.setCursor(currentPosition);
                     }
-                }, 300); // 🔧 縮短延遲到300ms
-                
-            } else if (change.origin === 'setValue') {
-                // 程式設置代碼，不觸發編輯狀態
-                console.log('🔄 程式設置代碼，保持原編輯狀態');
+                }, 300);
             }
         });
         
-        // 2. 🔧 強化按鍵監聽 - 幾乎所有按鍵都觸發編輯狀態
+        // 2. 按鍵監聽
         this.editor.getWrapperElement().addEventListener('keydown', (event) => {
-            // 只排除最基本的導航鍵
-            const excludeKeys = ['Control', 'Alt', 'Shift', 'Meta', 'CapsLock', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12'];
-            const isArrowKey = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key);
+            const excludeKeys = ['Control', 'Alt', 'Shift', 'Meta', 'CapsLock'];
             
-            // 🔧 更寬鬆的條件：Tab, Enter, Backspace, Delete 都觸發編輯狀態
-            const isEditingKey = ['Tab', 'Enter', 'Backspace', 'Delete', 'Space'].includes(event.key);
-            
-            if (!excludeKeys.includes(event.key) && (!isArrowKey || isEditingKey)) {
+            if (!excludeKeys.includes(event.key)) {
                 this.isEditing = true;
                 this.editStartTime = Date.now();
-                console.log('⌨️ 按鍵觸發編輯狀態:', event.key);
                 this.resetEditingTimeout();
             }
         });
         
-        // 3. 文本選擇也觸發編輯狀態（準備編輯）
+        // 3. 文本選擇
         this.editor.on('cursorActivity', () => {
             if (this.editor.somethingSelected()) {
                 this.isEditing = true;
                 this.editStartTime = Date.now();
-                console.log('🖱️ 文本選擇觸發編輯狀態');
                 this.resetEditingTimeout();
             }
         });
         
-        // 4. 監聽粘貼事件
+        // 4. 粘貼事件
         this.editor.getWrapperElement().addEventListener('paste', () => {
             this.isEditing = true;
             this.editStartTime = Date.now();
-            console.log('📋 粘貼觸發編輯狀態');
             this.resetEditingTimeout();
         });
         
-        // 5. 監聽剪切事件
+        // 5. 剪切事件
         this.editor.getWrapperElement().addEventListener('cut', () => {
             this.isEditing = true;
             this.editStartTime = Date.now();
-            console.log('✂️ 剪切觸發編輯狀態');
             this.resetEditingTimeout();
         });
         
-        // 6. 獲得焦點時也可能開始編輯
+        // 6. 焦點處理
         this.editor.on('focus', () => {
             console.log('👁️ 編輯器獲得焦點');
-            // 不立即設置編輯狀態，但準備好快速響應
         });
         
-        // 7. 🔧 延長失去焦點的重置時間
         this.editor.on('blur', () => {
             console.log('👋 編輯器失去焦點');
-            // 🔧 延遲5秒重置，給用戶時間回到編輯器
             setTimeout(() => {
                 if (this.isEditing && (Date.now() - this.editStartTime) > 10000) {
                     this.isEditing = false;
-                    console.log('⏹️ 失去焦點超時，重置編輯狀態');
                 }
-            }, 5000); // 延長到5秒
+            }, 5000);
         });
         
-        // 8. 🔧 調整定期狀態監控（降低頻率，延長超時）
+        // 7. 定期狀態監控
         setInterval(() => {
-            if (this.isEditing) {
-                const duration = (Date.now() - this.editStartTime) / 1000;
-                if (duration > 60) { // 🔧 延長到60秒自動重置
-                    this.isEditing = false;
-                    console.log('⏰ 編輯狀態超時自動重置 (60秒)');
-                }
+            if (this.isEditing && (Date.now() - this.editStartTime) > 60000) {
+                this.isEditing = false;
             }
-        }, 15000); // 每15秒檢查一次
+        }, 15000);
         
-        console.log('✅ 強化編輯狀態追蹤系統設置完成 (V2)');
+        console.log('✅ 編輯狀態追蹤系統設置完成');
     }
     
     // 🔧 調整編輯超時計時器（縮短超時時間）
@@ -856,15 +738,87 @@ class EditorManager {
         
         console.log(`📤 準備發送代碼變更 - 強制發送: ${forceUpdate}, 用戶: ${wsManager.currentUser}`);
         
+        // 🔧 新增：衝突預警檢查（只在非強制更新時進行）
+        if (!forceUpdate && this.shouldShowConflictWarning()) {
+            const conflictInfo = this.getConflictWarningInfo();
+            
+            // 創建模態對話框
+            const modalHTML = `
+                <div class="modal fade" id="conflictWarningModal" tabindex="-1">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header bg-warning">
+                                <h5 class="modal-title">
+                                    <i class="fas fa-exclamation-triangle"></i> 衝突預警
+                                </h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-warning">
+                                    <p><strong>檢測到其他同學可能正在編輯中：</strong></p>
+                                    <p class="mb-0">${conflictInfo.activeUsers.join(', ')}</p>
+                                </div>
+                                
+                                <p>您的修改可能會與他們的工作產生衝突。</p>
+                                
+                                <div class="card mb-3">
+                                    <div class="card-header bg-info text-white">
+                                        <i class="fas fa-lightbulb"></i> 建議操作
+                                    </div>
+                                    <div class="card-body">
+                                        <ul class="list-unstyled mb-0">
+                                            <li><i class="fas fa-check text-success"></i> 在聊天室先與其他同學協商</li>
+                                            <li><i class="fas fa-check text-success"></i> 使用 AI 分析可能的衝突</li>
+                                            <li><i class="fas fa-check text-success"></i> 考慮先保存您的更改</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+                                    <i class="fas fa-times"></i> 取消發送
+                                </button>
+                                <button type="button" class="btn btn-info" onclick="Editor.analyzeConflictWithAI()">
+                                    <i class="fas fa-robot"></i> AI 分析
+                                </button>
+                                <button type="button" class="btn btn-primary" onclick="Editor.confirmSendCode()">
+                                    <i class="fas fa-paper-plane"></i> 繼續發送
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // 移除舊的模態框（如果存在）
+            const existingModal = document.getElementById('conflictWarningModal');
+            if (existingModal) {
+                existingModal.remove();
+            }
+            
+            // 添加新的模態框
+            document.body.insertAdjacentHTML('beforeend', modalHTML);
+            
+            // 顯示模態框
+            const modal = new bootstrap.Modal(document.getElementById('conflictWarningModal'));
+            modal.show();
+            
+            // 在聊天室提示用戶可以協商
+            if (window.Chat && typeof window.Chat.addSystemMessage === 'function') {
+                window.Chat.addSystemMessage(`💬 ${wsManager.currentUser} 想要修改代碼，請大家協商一下`);
+            }
+            return;
+        }
+        
+        // 發送代碼變更消息
         const message = {
             type: 'code_change',
             code: code,
             userName: wsManager.currentUser,
             timestamp: Date.now(),
-            version: this.codeVersion + 1
+            hasConflictWarning: !forceUpdate && this.shouldShowConflictWarning()
         };
         
-        // 如果是強制更新，添加標記
         if (forceUpdate) {
             message.forceUpdate = true;
             console.log('🔥 強制更新標記已添加');
@@ -878,257 +832,72 @@ class EditorManager {
         }
     }
 
-    // 檢查是否應該顯示衝突預警
+    // 確認發送代碼
+    confirmSendCode() {
+        const modal = bootstrap.Modal.getInstance(document.getElementById('conflictWarningModal'));
+        if (modal) {
+            modal.hide();
+        }
+        this.sendCodeChange(true);
+    }
+
+    // 使用 AI 分析潛在衝突
+    async analyzeConflictWithAI() {
+        const currentCode = this.editor.getValue();
+        const message = {
+            type: 'ai_request',
+            action: 'analyze_conflict',
+            code: currentCode,
+            context: {
+                activeUsers: Array.from(this.collaboratingUsers),
+                currentUser: wsManager.currentUser
+            }
+        };
+
+        try {
+            const response = await wsManager.sendMessage(message);
+            // AI 分析結果會通過 WebSocket 返回
+            console.log('✅ AI 分析請求已發送');
+        } catch (error) {
+            console.error('❌ AI 分析請求失敗:', error);
+            UI.showErrorToast('AI 分析請求失敗，請稍後再試');
+        }
+    }
+
+    // 🆕 檢查是否需要顯示衝突預警
     shouldShowConflictWarning() {
-        // 檢查是否有其他用戶正在編輯
-        const otherEditing = Array.from(this.collaboratingUsers.values()).some(user => 
-            user.isEditing && user.userName !== wsManager.currentUser
-        );
+        // 檢查是否有其他用戶正在活躍編輯
+        const activeUsers = this.getActiveCollaborators();
+        const hasOtherActiveUsers = activeUsers.length > 0;
         
-        return otherEditing;
+        // 檢查最近是否收到其他用戶的代碼變更（30秒內）
+        const recentActivity = this.lastRemoteChangeTime && 
+                              (Date.now() - this.lastRemoteChangeTime) < 30000;
+        
+        console.log(`🔍 衝突預警檢查:`);
+        console.log(`   - 其他活躍用戶: ${activeUsers.length > 0 ? activeUsers.join(', ') : '無'}`);
+        console.log(`   - 最近活動: ${recentActivity ? '是' : '否'}`);
+        
+        return hasOtherActiveUsers || recentActivity;
     }
 
-    // 顯示衝突預警
-    showConflictWarning(conflictingUsers) {
-        const warningContainer = document.getElementById('conflictWarning');
-        if (!warningContainer) return;
-
-        const userNames = conflictingUsers.map(user => user.userName).join('、');
-        
-        warningContainer.innerHTML = `
-            <div class="alert alert-warning alert-dismissible fade show" role="alert">
-                <strong>⚠️ 衝突警告！</strong> 
-                <p>用戶 ${userNames} 正在編輯相同的程式碼區域。</p>
-                <div class="btn-group" role="group">
-                    <button type="button" class="btn btn-success btn-sm" onclick="Editor.resolveConflict('accept')">
-                        接受修改
-                    </button>
-                    <button type="button" class="btn btn-danger btn-sm" onclick="Editor.resolveConflict('reject')">
-                        拒絕修改
-                    </button>
-                    <button type="button" class="btn btn-info btn-sm" onclick="Editor.resolveConflict('share')">
-                        分享到聊天室
-                    </button>
-                    <button type="button" class="btn btn-primary btn-sm" onclick="Editor.resolveConflict('ai')">
-                        AI 分析
-                    </button>
-                </div>
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>
-        `;
-
-        // 顯示警告
-        warningContainer.style.display = 'block';
-        
-        // 添加到活動衝突列表
-        this.activeConflicts.set('current', {
-            users: conflictingUsers,
-            code: this.editor.getValue()
-        });
+    // 🆕 獲取衝突預警信息
+    getConflictWarningInfo() {
+        const activeUsers = this.getActiveCollaborators();
+        return {
+            activeUsers: activeUsers,
+            lastActivity: this.lastRemoteChangeTime ? 
+                         new Date(this.lastRemoteChangeTime).toLocaleTimeString() : 
+                         '未知'
+        };
     }
 
-    // 解決衝突
-    async resolveConflict(action) {
-        const currentConflict = this.activeConflicts.get('current');
-        if (!currentConflict) return;
-
-        switch (action) {
-            case 'accept':
-                // 接受當前修改
-                wsManager.sendMessage({
-                    type: 'conflict_resolved',
-                    resolution: 'accept',
-                    code: this.editor.getValue()
-                });
-                break;
-
-            case 'reject':
-                // 拒絕當前修改，恢復到衝突前的狀態
-                this.editor.setValue(currentConflict.code);
-                break;
-
-            case 'share':
-                // 分享到聊天室
-                if (window.chatManager) {
-                    window.chatManager.sendMessage({
-                        type: 'conflict_share',
-                        message: `衝突代碼分享：\n\`\`\`python\n${this.editor.getValue()}\n\`\`\``,
-                        userName: wsManager.currentUser
-                    });
-                }
-                break;
-
-            case 'ai':
-                // 請求 AI 分析
-                if (window.aiAssistant) {
-                    await window.aiAssistant.analyzeConflict(currentConflict.users);
-                }
-                break;
-        }
-
-        // 清除警告
-        const warningContainer = document.getElementById('conflictWarning');
-        if (warningContainer) {
-            warningContainer.style.display = 'none';
-        }
-
-        // 清除當前衝突
-        this.activeConflicts.delete('current');
-    }
-
-    // 顯示 AI 衝突分析
-    async showAIConflictAnalysis(editingUsers) {
-        try {
-            const currentCode = this.editor.getValue();
-            const editingUserNames = editingUsers
-                .filter(user => user.userName !== wsManager.currentUser)
-                .map(user => user.userName)
-                .join(', ');
-            
-            // 準備發送給 AI 的數據
-            const analysisData = {
-                current_code: currentCode,
-                editing_users: editingUserNames,
-                current_user: wsManager.currentUser,
-                context: {
-                    is_editing: this.isEditing,
-                    code_version: this.codeVersion,
-                    timestamp: Date.now()
-                }
-            };
-            
-            // 調用 AI 助教 API
-            const response = await fetch('/api/ai-assistant/conflict-analysis', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(analysisData)
-            });
-            
-            if (!response.ok) {
-                throw new Error('AI 分析請求失敗');
-            }
-            
-            const result = await response.json();
-            
-            // 顯示 AI 分析結果
-            window.UI.showAIAnalysis({
-                title: '🤖 AI衝突分析建議',
-                content: result.analysis,
-                suggestions: result.suggestions
-            });
-            
-        } catch (error) {
-            console.error('AI 衝突分析失敗:', error);
-            window.UI.showErrorToast('AI 分析暫時無法使用，請稍後再試');
-        }
-    }
-
-    // 模擬衝突操作分析
-    async simulateConflictOperation(operation) {
-        try {
-            const currentCode = this.editor.getValue();
-            
-            // 準備發送給 AI 的數據
-            const simulationData = {
-                current_code: currentCode,
-                operation: operation,
-                current_user: wsManager.currentUser,
-                context: {
-                    is_editing: this.isEditing,
-                    code_version: this.codeVersion,
-                    collaborating_users: Array.from(this.collaboratingUsers.values()),
-                    timestamp: Date.now()
-                }
-            };
-            
-            // 調用 AI 助教 API
-            const response = await fetch('/api/ai-assistant/simulate-conflict', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(simulationData)
-            });
-            
-            if (!response.ok) {
-                throw new Error('AI 模擬分析請求失敗');
-            }
-            
-            const result = await response.json();
-            
-            // 顯示模擬分析結果
-            window.UI.showAIAnalysis({
-                title: '🤖 操作衝突模擬分析',
-                content: result.analysis,
-                risks: result.risks,
-                recommendations: result.recommendations,
-                steps: result.suggested_steps
-            });
-            
-        } catch (error) {
-            console.error('AI 模擬分析失敗:', error);
-            window.UI.showErrorToast('AI 模擬分析暫時無法使用，請稍後再試');
-        }
-    }
-
-    // 初始化衝突分析按鈕
-    initConflictAnalysisButton() {
-        const conflictBtn = document.querySelector('#conflictAnalysisBtn');
-        if (!conflictBtn) return;
-        
-        const operationMenu = document.createElement('div');
-        operationMenu.className = 'operation-menu d-none';
-        operationMenu.innerHTML = `
-            <div class="card">
-                <div class="card-header">
-                    <h6>選擇要模擬的操作</h6>
-                </div>
-                <div class="card-body">
-                    <button class="btn btn-sm btn-outline-primary mb-2" data-operation="load">
-                        <i class="fas fa-file-import"></i> 載入檔案
-                    </button>
-                    <button class="btn btn-sm btn-outline-primary mb-2" data-operation="import">
-                        <i class="fas fa-file-upload"></i> 導入代碼
-                    </button>
-                    <button class="btn btn-sm btn-outline-primary mb-2" data-operation="paste">
-                        <i class="fas fa-paste"></i> 貼上代碼
-                    </button>
-                    <button class="btn btn-sm btn-outline-primary mb-2" data-operation="replace">
-                        <i class="fas fa-exchange-alt"></i> 替換全部
-                    </button>
-                    <button class="btn btn-sm btn-outline-primary" data-operation="merge">
-                        <i class="fas fa-code-branch"></i> 合併代碼
-                    </button>
-                </div>
-            </div>
-        `;
-        
-        // 添加操作按鈕事件
-        operationMenu.querySelectorAll('button').forEach(button => {
-            button.addEventListener('click', () => {
-                const operation = button.dataset.operation;
-                this.simulateConflictOperation(operation);
-                operationMenu.classList.add('d-none');
-            });
-        });
-        
-        // 將選單添加到按鈕旁
-        conflictBtn.parentNode.appendChild(operationMenu);
-        
-        // 點擊衝突分析按鈕時顯示選單
-        conflictBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            operationMenu.classList.toggle('d-none');
-        });
-        
-        // 點擊其他地方時隱藏選單
-        document.addEventListener('click', (e) => {
-            if (!conflictBtn.contains(e.target) && !operationMenu.contains(e.target)) {
-                operationMenu.classList.add('d-none');
-            }
-        });
+    // 🆕 獲取當前活躍的協作者列表
+    getActiveCollaborators() {
+        // 這個方法需要與用戶列表管理結合
+        // 目前先返回已知的協作用戶
+        const collaborators = Array.from(this.collaboratingUsers || []);
+        return collaborators.filter(user => user !== wsManager.currentUser);
     }
 
     // 載入歷史記錄從本地存儲
@@ -1197,149 +966,11 @@ class EditorManager {
 
         console.log(`📂 更新歷史記錄 UI，共 ${history.length} 個項目`);
     }
-
-    // 初始化事件監聽器
-    initializeEventListeners() {
-        if (!this.editor) return;
-
-        // 監聽編輯器變更
-        this.editor.on('change', (cm, change) => {
-            if (change.origin !== 'setValue' && change.origin !== 'remote') {
-                this.isEditing = true;
-                this.handleLocalCodeChange();
-                
-                // 檢查衝突
-                this.checkConflicts(change);
-            }
-        });
-
-        // 監聽游標活動
-        this.editor.on('cursorActivity', (cm) => {
-            if (this.isEditing) {
-                // 更新協作狀態
-                wsManager.sendMessage({
-                    type: 'editing_status',
-                    userName: wsManager.currentUser,
-                    isEditing: true,
-                    position: cm.getCursor()
-                });
-            }
-        });
-
-        // 監聽失去焦點
-        this.editor.on('blur', () => {
-            this.isEditing = false;
-            // 通知其他用戶停止編輯
-            wsManager.sendMessage({
-                type: 'editing_status',
-                userName: wsManager.currentUser,
-                isEditing: false
-            });
-        });
-    }
-
-    // 檢查代碼衝突
-    checkConflicts(change) {
-        // 獲取變更的行範圍
-        const from = change.from.line;
-        const to = change.to.line + (change.text ? change.text.length - 1 : 0);
-        
-        // 檢查其他用戶是否正在編輯相同的行
-        const conflictingUsers = Array.from(this.collaboratingUsers.values())
-            .filter(user => {
-                if (!user.isEditing || user.userName === wsManager.currentUser) {
-                    return false;
-                }
-                
-                // 檢查是否有重疊的編輯範圍
-                if (user.position) {
-                    const userLine = user.position.line;
-                    // 擴大檢查範圍，包括上下各一行
-                    return userLine >= (from - 1) && userLine <= (to + 1);
-                }
-                return false;
-            });
-
-        if (conflictingUsers.length > 0) {
-            // 觸發衝突警告
-            this.showConflictWarning(conflictingUsers);
-            
-            // 通知其他用戶
-            wsManager.sendMessage({
-                type: 'conflict_detected',
-                users: conflictingUsers.map(u => u.userName),
-                lines: { from, to }
-            });
-            
-            // 如果有AI助教，請求分析
-            if (window.aiAssistant) {
-                window.aiAssistant.analyzeConflict(conflictingUsers);
-            }
-        }
-    }
-
-    // 更新協作用戶狀態
-    updateCollaboratorStatus(userName, status) {
-        if (!this.collaboratingUsers.has(userName)) {
-            this.collaboratingUsers.set(userName, {
-                userName: userName,
-                isEditing: false,
-                position: null
-            });
-        }
-
-        const user = this.collaboratingUsers.get(userName);
-        Object.assign(user, status);
-
-        // 如果用戶停止編輯，清除位置信息
-        if (!status.isEditing) {
-            user.position = null;
-        }
-    }
-
-    // 設置初始代碼
-    setInitialCode(code, suppressEvent = false) {
-        console.log('📝 設置初始代碼');
-        
-        try {
-            // 暫時禁用事件處理
-            this.suppressEvents = true;
-            
-            // 清除所有標記
-            this.editor.clearGutter('CodeMirror-lint-markers');
-            this.editor.clearGutter('breakpoints');
-            
-            // 設置代碼
-            this.editor.setValue(code || '');
-            
-            // 重置版本號
-            this.codeVersion = 0;
-            
-            // 重置編輯狀態
-            this.isEditing = false;
-            this.pendingRemoteChange = null;
-            
-            // 如果不需要觸發事件，直接返回
-            if (suppressEvent) {
-                console.log('🔕 不觸發代碼變更事件');
-                this.suppressEvents = false;
-                return;
-            }
-            
-            // 觸發代碼變更事件
-            this.handleLocalCodeChange();
-            
-            console.log('✅ 初始代碼設置完成');
-        } catch (error) {
-            console.error('❌ 設置初始代碼失敗:', error);
-        } finally {
-            this.suppressEvents = false;
-        }
-    }
 }
 
-// 創建全局編輯器管理器實例
-window.editorManager = new EditorManager();
+// 全局編輯器管理器實例
+const Editor = new EditorManager(); 
 
-// 導出編輯器管理器類
-window.EditorManager = EditorManager; 
+// 確保全域可訪問性 - 修復WebSocket訪問問題
+window.Editor = Editor;
+console.log('✅ 全域編輯器實例已創建並設置到 window.Editor:', window.Editor); 
