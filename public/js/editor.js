@@ -835,6 +835,7 @@ class EditorManager {
     }
 
     // 🆕 檢查是否需要顯示衝突預警
+    /* 暫時註解衝突預警相關功能
     shouldShowConflictWarning() {
         // 檢查是否有其他用戶正在活躍編輯
         const activeUsers = this.getActiveCollaborators();
@@ -855,24 +856,30 @@ class EditorManager {
         return activeUsers.length > 0 && recentActivity;
     }
 
-    // 🆕 獲取衝突預警信息
+    // 獲取衝突預警信息
     getConflictWarningInfo() {
-        const activeUsers = this.getActiveCollaborators();
         return {
-            activeUsers: activeUsers,
-            lastActivity: this.lastRemoteChangeTime ? 
-                         new Date(this.lastRemoteChangeTime).toLocaleTimeString() : 
-                         '未知'
+            activeUsers: this.getActiveCollaborators()
         };
     }
+    */
 
     // 🆕 獲取當前活躍的協作者列表
+    /* 暫時註解衝突預警相關功能
     getActiveCollaborators() {
-        // 這個方法需要與用戶列表管理結合
-        // 目前先返回已知的協作用戶
-        const collaborators = Array.from(this.collaboratingUsers || []);
-        return collaborators.filter(user => user !== wsManager.currentUser);
+        const activeUsers = [];
+        const now = Date.now();
+        
+        this.collaboratingUsers.forEach((lastActive, user) => {
+            // 如果用戶在最近30秒內有活動，視為活躍
+            if (now - lastActive < 30000) {
+                activeUsers.push(user);
+            }
+        });
+        
+        return activeUsers;
     }
+    */
 
     // 載入歷史記錄從本地存儲
     loadHistoryFromStorage() {

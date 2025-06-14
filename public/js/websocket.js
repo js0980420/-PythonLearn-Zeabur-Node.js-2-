@@ -456,9 +456,70 @@ class WebSocketManager {
 
     // 處理聊天消息
     handleChatMessage(message) {
-        if (window.Chat) {
-            const { userName, roomName, message: chatText, isTeacher } = message;
-            window.Chat.addMessage(userName, chatText, false, isTeacher, roomName);
+        console.log('📨 收到聊天消息:', message);
+        
+        try {
+            // 檢查是否在教師監控頁面
+            const isTeacherMonitor = window.location.pathname.includes('/teacher');
+            
+            if (isTeacherMonitor) {
+                // 教師監控頁面的聊天處理
+                if (window.TeacherChat && typeof window.TeacherChat.addMessage === 'function') {
+                    window.TeacherChat.addMessage(message);
+                } else {
+                    console.warn('⚠️ 教師聊天室組件未就緒');
+                    // 嘗試將消息添加到等待隊列
+                    if (!window.pendingTeacherMessages) {
+                        window.pendingTeacherMessages = [];
+                    }
+                    window.pendingTeacherMessages.push(message);
+                }
+            } else {
+                // 學生頁面的聊天處理
+                if (window.Chat && typeof window.Chat.addMessage === 'function') {
+                    window.Chat.addMessage(message);
+                } else {
+                    console.warn('⚠️ 聊天室組件未就緒');
+                }
+            }
+            
+            // 播放通知音效（如果存在）
+            if (window.UI && typeof window.UI.playMessageSound === 'function') {
+                window.UI.playMessageSound();
+            }
+            
+        } catch (error) {
+            console.error('❌ 處理聊天消息時發生錯誤:', error);
+        }
+    }
+
+    // 處理系統消息
+    handleSystemMessage(message) {
+        console.log('📨 收到系統消息:', message);
+        
+        try {
+            // 檢查是否在教師監控頁面
+            const isTeacherMonitor = window.location.pathname.includes('/teacher');
+            
+            if (isTeacherMonitor) {
+                // 教師監控頁面的系統消息處理
+                if (window.TeacherChat && typeof window.TeacherChat.addSystemMessage === 'function') {
+                    window.TeacherChat.addSystemMessage(message);
+                }
+            } else {
+                // 學生頁面的系統消息處理
+                if (window.Chat && typeof window.Chat.addSystemMessage === 'function') {
+                    window.Chat.addSystemMessage(message);
+                }
+            }
+            
+            // 顯示系統通知
+            if (window.UI && typeof window.UI.showSystemNotification === 'function') {
+                window.UI.showSystemNotification(message.content);
+            }
+            
+        } catch (error) {
+            console.error('❌ 處理系統消息時發生錯誤:', error);
         }
     }
 
