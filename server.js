@@ -1021,20 +1021,8 @@ function handleTeacherMonitor(ws, message) {
     if (action === 'register') {
         // 註冊為教師監控
         teacherMonitors.add(ws.userId);
-        
-        // 更新用戶資訊
         if (users[ws.userId]) {
             users[ws.userId].isTeacher = true;
-            users[ws.userId].type = 'teacher';
-            
-            // 如果在房間中，更新房間中的用戶資訊
-            if (users[ws.userId].roomId && rooms[users[ws.userId].roomId]) {
-                const room = rooms[users[ws.userId].roomId];
-                if (room.users[ws.userId]) {
-                    room.users[ws.userId].isTeacher = true;
-                    room.users[ws.userId].type = 'teacher';
-                }
-            }
         }
         
         console.log(`👨‍🏫 教師監控已註冊: ${ws.userId}`);
@@ -1056,19 +1044,28 @@ function handleTeacherMonitor(ws, message) {
         teacherMonitors.delete(ws.userId);
         if (users[ws.userId]) {
             users[ws.userId].isTeacher = false;
-            users[ws.userId].type = 'student';
-            
-            // 如果在房間中，更新房間中的用戶資訊
-            if (users[ws.userId].roomId && rooms[users[ws.userId].roomId]) {
-                const room = rooms[users[ws.userId].roomId];
-                if (room.users[ws.userId]) {
-                    room.users[ws.userId].isTeacher = false;
-                    room.users[ws.userId].type = 'student';
-                }
-            }
         }
         
         console.log(`👨‍🏫 教師監控已取消註冊: ${ws.userId}`);
+    } else {
+        // 默認行為：如果沒有指定action，直接註冊為教師
+        teacherMonitors.add(ws.userId);
+        if (users[ws.userId]) {
+            users[ws.userId].isTeacher = true;
+        }
+        
+        console.log(`👨‍🏫 教師監控已自動註冊: ${ws.userId} (默認行為)`);
+        
+        // 發送歡迎消息
+        ws.send(JSON.stringify({
+            type: 'teacher_monitor_registered',
+            userId: ws.userId,
+            message: '教師監控已連接',
+            timestamp: Date.now()
+        }));
+        
+        // 發送當前統計信息
+        broadcastStatsToTeachers();
     }
 }
 
@@ -1194,7 +1191,6 @@ function handleTeacherChat(ws, message) {
         
         room.chatHistory.push(teacherChatMessage);
         
-        // 廣播給房間內的所有用戶
         broadcastToRoom(targetRoom, {
             type: 'chat_message',
             ...teacherChatMessage
@@ -2750,27 +2746,11 @@ async function handleLoadCode(ws, message) {
     }
 
     const userName = user.name;
-    const { loadLatest } = message;
+    const { loadLatest, saveId } = message;
 
-    console.log(`📥 ${userName} 請求載入代碼 - 載入最新: ${loadLatest}`);
+    console.log(`📥 ${userName} 請求載入代碼 - 載入最新: ${loadLatest}, 特定ID: ${saveId}`);
 
-    // 如果請求最新代碼，直接返回房間當前代碼
-    if (loadLatest) {
-        ws.send(JSON.stringify({
-            type: 'code_change',
-            code: room.code || '',
-            version: room.version || 0,
-            userName: 'system',
-            userId: 'system',
-            timestamp: Date.now(),
-            roomId: user.roomId,
-            forceUpdate: true
-        }));
-        console.log(`✅ 已發送最新代碼給 ${userName}`);
-        return;
-    }
-
-    // 否則從用戶的個人代碼歷史中載入
+    // 🆕 從用戶的個人代碼歷史中載入
     if (!room.userCodeHistory || !room.userCodeHistory[userName] || room.userCodeHistory[userName].length === 0) {
         ws.send(JSON.stringify({
             type: 'load_code_error',
@@ -2783,36 +2763,43 @@ async function handleLoadCode(ws, message) {
     const userHistory = room.userCodeHistory[userName];
     let codeToLoad = null;
 
-    // 根據請求類型選擇要載入的代碼
-    if (message.saveId) {
-        codeToLoad = userHistory.find(h => h.id === message.saveId);
+    if (loadLatest) {
+        // 載入最新的代碼（第一個元素）
+        codeToLoad = userHistory[0];
+        console.log(`🔄 ${userName} 載入最新代碼記錄 (版本 ${codeToLoad.version})`);
+    } else if (saveId) {
+        // 載入特定ID的代碼
+        codeToLoad = userHistory.find(item => item.id === saveId);
+        if (!codeToLoad) {
+            ws.send(JSON.stringify({
+                type: 'load_code_error',
+                error: '找不到指定的代碼記錄',
+                message: '該代碼記錄可能已被刪除或不存在'
+            }));
+            return;
+        }
+        console.log(`🔄 ${userName} 載入特定代碼記錄: ${saveId} (版本 ${codeToLoad.version})`);
     } else {
-        codeToLoad = userHistory[userHistory.length - 1]; // 最新保存的代碼
-    }
-
-    if (!codeToLoad) {
         ws.send(JSON.stringify({
             type: 'load_code_error',
-            error: '找不到指定的代碼記錄'
+            error: '無效的載入請求',
+            message: '請指定要載入最新代碼或特定代碼ID'
         }));
         return;
     }
 
-    // 發送載入成功消息
+    // 發送載入成功響應
     ws.send(JSON.stringify({
         type: 'load_code_success',
         code: codeToLoad.code,
-        saveId: codeToLoad.id,
+        title: codeToLoad.title,
+        version: codeToLoad.version,
         timestamp: codeToLoad.timestamp,
-        message: '代碼載入成功'
+        author: codeToLoad.author,
+        message: `已載入您的代碼 "${codeToLoad.title}" (版本 ${codeToLoad.version})`
     }));
 
-    // 廣播代碼變更消息給房間內其他用戶
-    broadcastToRoom(user.roomId, {
-        type: 'code_loaded_notification',
-        userName: userName,
-        timestamp: Date.now()
-    }, ws.userId);
+    console.log(`✅ ${userName} 成功載入代碼: ${codeToLoad.title} (版本 ${codeToLoad.version})`);
 }
 
 // 🆕 處理獲取用戶個人代碼歷史記錄
@@ -2985,37 +2972,42 @@ async function handleSaveCode(ws, message) {
 
 // 處理代碼變更
 function handleCodeChange(ws, message) {
-    const user = users[ws.userId];
-    if (!user || !user.roomId) {
-        ws.send(JSON.stringify({
-            type: 'error',
-            error: '用戶未在房間中'
-        }));
+    const roomId = message.room || ws.currentRoom;
+    if (!roomId || !rooms[roomId]) {
+        console.error(`❌ 房間不存在: ${roomId}`);
         return;
     }
 
-    const room = rooms[user.roomId];
-    if (!room) {
-        ws.send(JSON.stringify({
-            type: 'error',
-            error: '房間不存在'
-        }));
-        return;
-    }
-
-    // 更新房間代碼
+    const room = rooms[roomId];
+    
+    // 檢查是否為強制更新
+    const isForceUpdate = message.forceUpdate === true;
+    
+    // 更新房間代碼和版本
     room.code = message.code;
     room.version = (room.version || 0) + 1;
-    
-    // 廣播代碼變更給房間內所有用戶
-    broadcastToRoom(user.roomId, {
+    room.lastModified = Date.now();
+    room.lastModifiedBy = ws.userId;
+
+    console.log(`📝 代碼變更 - 房間: ${roomId}, 版本: ${room.version}, 用戶: ${ws.userName}, 強制更新: ${isForceUpdate}`);
+
+    // 廣播消息
+    const broadcastMessage = {
         type: 'code_change',
         code: message.code,
         version: room.version,
-        userName: user.name,
+        userName: ws.userName,
         userId: ws.userId,
-        timestamp: Date.now()
-    });
+        timestamp: Date.now(),
+        roomId: roomId,
+        forceUpdate: isForceUpdate // 傳遞強制更新標記
+    };
+
+    // 廣播給房間內其他用戶
+    broadcastToRoom(roomId, broadcastMessage, ws.userId);
+
+    // 保存數據
+    saveDataToFile();
 }
 
 // 🆕 處理衝突通知 - 轉發給目標用戶

@@ -512,8 +512,8 @@ class ConflictResolverManager {
                 break;
         }
         
-        if (window.UI && window.UI.showToast) {
-            window.UI.showToast(message, 'success');
+        if (window.showToast) {
+            window.showToast(message, 'success');
         } else {
             alert(message);
         }
@@ -521,23 +521,9 @@ class ConflictResolverManager {
         // 清理衝突狀態
         this.currentConflict = null;
         this.lastAIAnalysis = null;
-        this.conflictData = null; // 新增：清理 conflictData
-        
-        // 重置編輯器狀態
         if (window.Editor) {
             window.Editor.resetEditingState();
-            window.Editor.setEnabled(true); // 新增：確保編輯器可用
         }
-        
-        // 移除所有相關模態框
-        const modals = ['conflictModal', 'senderWaitingModal', 'conflictHistoryModal'];
-        modals.forEach(modalId => {
-            const modal = document.getElementById(modalId);
-            if (modal) {
-                const bsModal = bootstrap.Modal.getInstance(modal);
-                if (bsModal) bsModal.hide();
-            }
-        });
     }
 
     // 🎯 AI分析回應處理

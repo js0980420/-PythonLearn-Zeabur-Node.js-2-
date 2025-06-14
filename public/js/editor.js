@@ -343,88 +343,277 @@ class EditorManager {
         }
     }
 
-    // 處理遠端代碼變更
+    // 處理遠端代碼變更 - 增強版衝突檢測
     handleRemoteCodeChange(message) {
         console.log('📨 收到遠程代碼變更:', message);
         
+        // 記錄遠程變更時間
+        this.lastRemoteChangeTime = message.timestamp || Date.now();
+        
+        // 如果是強制更新，直接應用
+        if (message.forceUpdate) {
+            console.log('🔥 強制更新模式，直接應用代碼');
+            this.applyRemoteCode(message);
+            if (window.UI) {
+                window.UI.showInfoToast(`${message.userName} 強制更新了代碼`);
+            }
+            return;
+        }
+        
+        // 詳細的衝突檢測邏輯
+        const localCode = this.editor.getValue();
+        const remoteCode = message.code;
+        const timeDiff = Math.abs((message.timestamp || Date.now()) - (this.editStartTime || Date.now()));
+        const recentlyEdited = this.editStartTime && timeDiff < 5000;
+        
+        // 增強的衝突檢測
+        const isConflict = (this.isEditing || recentlyEdited) && 
+                          message.userName !== wsManager.currentUser &&
+                          localCode !== remoteCode; // 只有當代碼真的不同時才算衝突
+        
+        console.log('🔍 增強衝突檢測結果:', {
+            isEditing: this.isEditing,
+            recentlyEdited,
+            differentUser: message.userName !== wsManager.currentUser,
+            codeDifferent: localCode !== remoteCode,
+            timeDiff: timeDiff + 'ms'
+        });
+        
+        if (isConflict) {
+            console.log('🚨 檢測到真實協作衝突！啟動雙方處理流程...');
+            
+            // 分析代碼差異
+            const diffAnalysis = this.analyzeCodeDifference(localCode, remoteCode);
+            
+            // 通知發送方（主改方）
+            this.notifyRemoteUserAboutConflict({
+                ...message,
+                localCode,
+                remoteCode,
+                localVersion: this.codeVersion,
+                remoteVersion: message.version,
+                conflictDetails: {
+                    timeDiff,
+                    diffAnalysis,
+                    localLength: localCode.length,
+                    remoteLength: remoteCode.length
+                }
+            });
+            
+            // 顯示本地衝突解決界面（被改方）
+            if (window.ConflictResolver) {
+                window.ConflictResolver.showConflictModal(
+                    localCode,
+                    remoteCode,
+                    message.userName,
+                    this.codeVersion,
+                    message.version,
+                    diffAnalysis
+                );
+            } else {
+                this.fallbackConflictHandling(message);
+            }
+            
+            // 在聊天室顯示詳細的衝突信息
+            if (window.Chat) {
+                window.Chat.addSystemMessage(
+                    `⚠️ 協作衝突：${message.userName} 和 ${wsManager.currentUser} 同時修改代碼\n` +
+                    `變更分析：${diffAnalysis.summary}\n` +
+                    `時間差：${Math.round(timeDiff/1000)}秒`
+                );
+            }
+        } else {
+            // 無衝突，正常應用代碼
+            console.log('✅ 無實質衝突，正常應用遠程代碼變更');
+            this.applyRemoteCode(message);
+        }
+    }
+
+    // 分析代碼差異
+    analyzeCodeDifference(localCode, remoteCode) {
+        const localLines = localCode.split('\n');
+        const remoteLines = remoteCode.split('\n');
+        
+        const changes = {
+            added: [],
+            removed: [],
+            modified: []
+        };
+        
+        // 使用最長公共子序列算法找出差異
+        const maxLines = Math.max(localLines.length, remoteLines.length);
+        for (let i = 0; i < maxLines; i++) {
+            const localLine = localLines[i];
+            const remoteLine = remoteLines[i];
+            
+            if (localLine === undefined && remoteLine) {
+                changes.added.push({
+                    line: i + 1,
+                    content: remoteLine
+                });
+            } else if (remoteLine === undefined && localLine) {
+                changes.removed.push({
+                    line: i + 1,
+                    content: localLine
+                });
+            } else if (localLine !== remoteLine) {
+                changes.modified.push({
+                    line: i + 1,
+                    oldContent: localLine,
+                    newContent: remoteLine
+                });
+            }
+        }
+        
+        // 生成變更摘要
+        const summary = this.generateChangeSummary(changes);
+        
+        return {
+            changes,
+            summary,
+            totalChanges: changes.added.length + changes.removed.length + changes.modified.length,
+            changeType: this.determineChangeType(changes)
+        };
+    }
+
+    // 生成變更摘要
+    generateChangeSummary(changes) {
+        const parts = [];
+        if (changes.added.length > 0) {
+            parts.push(`新增了 ${changes.added.length} 行`);
+        }
+        if (changes.removed.length > 0) {
+            parts.push(`刪除了 ${changes.removed.length} 行`);
+        }
+        if (changes.modified.length > 0) {
+            parts.push(`修改了 ${changes.modified.length} 行`);
+        }
+        return parts.join('，') || '無實質變更';
+    }
+
+    // 判斷變更類型
+    determineChangeType(changes) {
+        if (changes.added.length > 0 && changes.removed.length === 0 && changes.modified.length === 0) {
+            return { type: 'addition', description: '純新增內容' };
+        } else if (changes.added.length === 0 && changes.removed.length > 0 && changes.modified.length === 0) {
+            return { type: 'deletion', description: '純刪除內容' };
+        } else if (changes.modified.length > 0 && changes.added.length === 0 && changes.removed.length === 0) {
+            return { type: 'modification', description: '純修改內容' };
+        } else {
+            return { type: 'mixed', description: '混合變更' };
+        }
+    }
+
+    // 🆕 通知遠程用戶關於衝突的情況
+    notifyRemoteUserAboutConflict(message) {
+        console.log('📡 通知遠程用戶關於衝突...');
+        
+        // 發送衝突通知消息給服務器，服務器會轉發給相關用戶
+        const conflictNotification = {
+            type: 'conflict_notification',
+            targetUser: message.userName,  // 發送給主改方
+            conflictWith: wsManager.currentUser,  // 被改方（自己）
+            message: `${wsManager.currentUser} 正在處理您剛才發送的代碼修改衝突`,
+            timestamp: Date.now(),
+            conflictData: {
+                localUser: wsManager.currentUser,
+                remoteUser: message.userName,
+                localCode: message.localCode,
+                remoteCode: message.code
+            }
+        };
+        
+        if (wsManager.isConnected()) {
+            wsManager.sendMessage(conflictNotification);
+            console.log('✅ 衝突通知已發送給:', message.userName);
+        }
+    }
+
+    // 🆕 備用衝突處理方法
+    fallbackConflictHandling(message) {
+        console.log('🔧 執行備用衝突處理');
+        
+        const userChoice = confirm(
+            `🔔 檢測到代碼衝突！\n\n` +
+            `${message.userName} 正在修改代碼，但您也在編輯中。\n\n` +
+            `您的代碼長度: ${this.getCode().length} 字符\n` +
+            `${message.userName} 的代碼長度: ${(message.code || '').length} 字符\n\n` +
+            `點擊「確定」載入 ${message.userName} 的版本\n` +
+            `點擊「取消」保持您的版本\n\n` +
+            `建議：與 ${message.userName} 在聊天室協商`
+        );
+        
+        if (userChoice) {
+            // 用戶選擇載入遠程版本
+            this.applyRemoteCode(message);
+            this.resetEditingState();
+            console.log('🔄 用戶選擇載入遠程版本');
+            
+            // 通知聊天室
+            if (window.Chat && typeof window.Chat.addSystemMessage === 'function') {
+                window.Chat.addSystemMessage(`${wsManager.currentUser} 選擇載入 ${message.userName} 的代碼版本`);
+            }
+        } else {
+            // 用戶選擇保持本地版本，強制發送本地代碼
+            console.log('🔒 用戶選擇保持本地版本，發送本地代碼');
+            
+            // 通知聊天室
+            if (window.Chat && typeof window.Chat.addSystemMessage === 'function') {
+                window.Chat.addSystemMessage(`${wsManager.currentUser} 選擇保持自己的代碼版本`);
+            }
+            
+            setTimeout(() => {
+                this.sendCodeChange(true); // 強制發送
+            }, 100);
+        }
+    }
+
+    // 🔧 安全應用遠程代碼，避免觸發編輯狀態
+    applyRemoteCode(message) {
+        console.log('🔄 安全應用遠程代碼...');
+        console.log(`📝 代碼內容預覽: "${(message.code || '').substring(0, 50)}..."`);
+        console.log(`🔢 版本號: ${message.version}`);
+        
+        // 暫停編輯狀態檢測，避免循環觸發
+        const wasEditing = this.isEditing;
+        this.isEditing = false;
+        
+        // 清除所有超時計時器
+        clearTimeout(this.changeTimeout);
+        clearTimeout(this.editingTimeout);
+        
         try {
-            // 檢查編輯器實例是否存在且已初始化
-            if (!this.editor) {
-                throw new Error('編輯器實例不存在');
-            }
-
-            let currentPosition = null;
-            let currentSelection = null;
-
-            // 安全地獲取當前游標位置
-            try {
-                currentPosition = this.editor.selection.getCursor();
-                currentSelection = this.editor.getSelection().getRange();
-            } catch (e) {
-                console.warn('無法獲取游標位置:', e);
-            }
-            
-            // 暫時禁用 onChange 事件處理
-            const prevOnChange = this.editor.session.getDocument().on.change;
-            this.editor.session.getDocument().on.change = null;
-
-            // 更新代碼但保持游標位置
-            const prevScrollTop = this.editor.session.getScrollTop();
-            const content = message.code || '';
-            
-            // 使用 session.setValue 而不是 editor.setValue 來避免選擇整個文檔
-            this.editor.session.setValue(content);
-            
-            // 恢復 onChange 事件處理
-            this.editor.session.getDocument().on.change = prevOnChange;
+            // 設置代碼內容，使用 setValue 避免觸發編輯事件
+            this.editor.setValue(message.code || '');
             
             // 更新版本號
             if (message.version !== undefined) {
                 this.codeVersion = message.version;
                 this.updateVersionDisplay();
+                console.log(`✅ 遠程代碼已應用 - 長度: ${(message.code || '').length}, 版本: ${this.codeVersion}`);
             }
             
-            // 如果是其他用戶的更新且成功獲取了之前的游標位置，則恢復它
-            if (message.userName !== wsManager.currentUser && currentPosition) {
-                try {
-                    // 確保游標位置在有效範圍內
-                    const lines = this.editor.session.getLength();
-                    if (currentPosition.row < lines) {
-                        const lineLength = this.editor.session.getLine(currentPosition.row).length;
-                        const targetColumn = Math.min(currentPosition.column, lineLength);
-                        
-                        // 恢復游標位置
-                        this.editor.selection.moveCursorTo(currentPosition.row, targetColumn);
-                        
-                        // 如果有選擇範圍，也恢復它
-                        if (currentSelection && !currentSelection.isEmpty()) {
-                            this.editor.selection.setRange(currentSelection);
-                        } else {
-                            // 清除選擇範圍，只保留游標位置
-                            this.editor.clearSelection();
-                        }
-                        
-                        // 恢復滾動位置
-                        this.editor.session.setScrollTop(prevScrollTop);
-                    }
-                } catch (e) {
-                    console.warn('無法恢復游標位置:', e);
-                }
-            }
-            
-            console.log('✅ 已更新代碼，版本:', message.version);
-            
-            // 可選：顯示提示
-            if (window.UI && message.userName !== wsManager.currentUser) {
-                window.UI.showInfoToast(`${message.userName} 更新了代碼`);
-            }
         } catch (error) {
-            console.error('❌ 處理遠程代碼變更時發生錯誤:', error);
-            // 顯示錯誤提示
-            if (window.UI && typeof window.UI.showErrorToast === 'function') {
-                window.UI.showErrorToast('更新代碼時發生錯誤，請重新整理頁面');
-            }
+            console.error('❌ 應用遠程代碼時出錯:', error);
         }
+        
+        // 🔧 短暫延遲後處理編輯狀態
+        setTimeout(() => {
+            if (message.userName === wsManager.currentUser) {
+                // 自己的更新，完全重置編輯狀態
+                this.isEditing = false;
+                console.log('🔄 自己的更新，重置編輯狀態');
+            } else if (wasEditing && !message.forceUpdate) {
+                // 其他用戶更新但用戶之前在編輯，可能需要觸發衝突檢測
+                // 這裡不恢復編輯狀態，讓用戶決定
+                this.isEditing = false;
+                console.log('🔄 其他用戶更新，暫時重置編輯狀態');
+            } else {
+                // 正常情況，保持重置狀態
+                this.isEditing = false;
+                console.log('🔄 正常狀態，編輯狀態已重置');
+            }
+        }, 200);
     }
 
     // 處理運行結果
@@ -661,12 +850,13 @@ class EditorManager {
         // this.updateVersionDisplay();
     }
 
-    // 更新版本號顯示
+    // 更新版本號顯示（移除此功能）
     updateVersionDisplay() {
-        const versionDisplay = document.getElementById('codeVersion');
-        if (versionDisplay) {
-            versionDisplay.textContent = `v${this.codeVersion || 0}`;
-        }
+        // 註釋掉版本號顯示功能
+        // const versionElement = document.getElementById('codeVersion');
+        // if (versionElement) {
+        //     versionElement.textContent = `版本: ${this.codeVersion}`;
+        // }
     }
 
     // 移除協作用戶
