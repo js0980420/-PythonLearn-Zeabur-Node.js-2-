@@ -1,3 +1,8 @@
+// editor.js
+// 引入 diff-match-patch 函式庫
+// 您需要在 HTML 檔案中加入這行：
+// <script src="https://unpkg.com/diff-match-patch@latest/index.js"></script>
+
 class EditorManager {
     constructor() {
         this.editor = null;
@@ -11,7 +16,10 @@ class EditorManager {
         this.codeHistory = JSON.parse(localStorage.getItem('codeHistory') || '[]');
         this.maxHistorySize = 10;
         this.lastRemoteChangeTime = null;
-        
+
+        // 初始化 diff-match-patch 實例
+        this.dmp = new diff_match_patch();
+
         console.log('🔧 編輯器管理器已創建，初始版本號:', this.codeVersion);
     }
 
@@ -24,7 +32,7 @@ class EditorManager {
         }
 
         console.log('🔧 正在初始化 CodeMirror 編輯器...');
-        
+
         this.editor = CodeMirror.fromTextArea(textArea, {
             mode: 'python',
             theme: 'default',
@@ -33,10 +41,7 @@ class EditorManager {
             autoCloseBrackets: true,
             matchBrackets: true,
             lineWrapping: true,
-            // 禁用所有自動游標相關設置
-            autofocus: false,
-            cursorBlinkRate: 530,
-            resetSelectionOnContextMenu: false,
+            autofocus: true, // 添加自動聚焦
             extraKeys: {
                 "Ctrl-S": (cm) => {
                     this.saveCode();
@@ -68,15 +73,16 @@ class EditorManager {
 
         // 設置自動保存 - 5分鐘一次
         this.setupAutoSave();
-        
+
         // 載入歷史記錄
         this.loadHistoryFromStorage();
 
-        // 只刷新編輯器，不設置焦點和游標位置
+        // 💡 確保編輯器可以輸入 - 延遲聚焦
         setTimeout(() => {
             if (this.editor) {
                 this.editor.refresh();
-                console.log('✅ 編輯器已刷新，準備就緒');
+                this.editor.focus();
+                console.log('✅ 編輯器已聚焦，可以開始輸入');
             }
         }, 100);
 
@@ -86,12 +92,12 @@ class EditorManager {
     // 動態設置編輯器樣式
     setupEditorStyles() {
         console.log('🎨 開始設置編輯器樣式 (V2)...');
-        
+
         const editorElement = this.editor.getWrapperElement();
         const gutters = editorElement.querySelector('.CodeMirror-gutters');
         const scrollElement = editorElement.querySelector('.CodeMirror-scroll');
         const linesElement = editorElement.querySelector('.CodeMirror-lines');
-        
+
         // 設置編輯器容器樣式 (div.CodeMirror)
         editorElement.style.cssText = `
             height: 500px !important;
@@ -103,7 +109,7 @@ class EditorManager {
             background: #FFFFFF !important; /* 強制白色背景 */
             color: #333333 !important; /* 預設深色文字 */
         `;
-        
+
         // 設置行號區域樣式
         if (gutters) {
             gutters.style.cssText = `
@@ -111,7 +117,7 @@ class EditorManager {
                 border-right: 1px solid #e9ecef !important;
                 width: 60px !important;
             `;
-            
+
             const lineNumbers = gutters.querySelectorAll('.CodeMirror-linenumber');
             lineNumbers.forEach(lineNum => {
                 lineNum.style.cssText = `
@@ -122,14 +128,14 @@ class EditorManager {
                 `;
             });
         }
-        
+
         // 設置滾動區域樣式
         if (scrollElement) {
             scrollElement.style.cssText = `
                 background: transparent !important; /* 透明背景，顯示 editorElement 的白色 */
             `;
         }
-        
+
         // 設置程式碼行容器樣式
         if (linesElement) {
             linesElement.style.cssText = `
@@ -143,25 +149,25 @@ class EditorManager {
         // 確保編輯器不是只讀模式
         this.editor.setOption('readOnly', false);
         console.log('🔧 編輯器設置為可編輯模式');
-        
+
         // 監聽編輯器內容變化，動態調整新行的樣式 (主要針對行號文字)
         this.editor.on('update', () => {
             this.applyDynamicStyles();
         });
-        
+
         // 首次強制刷新編輯器，確保樣式應用
         if (this.editor) {
             this.editor.refresh();
         }
-        
+
         console.log('✅ 編輯器樣式設置完成 (V2)');
     }
-    
+
     // 動態應用樣式到新生成的行號
     applyDynamicStyles() {
         const editorElement = this.editor.getWrapperElement();
         const gutters = editorElement.querySelector('.CodeMirror-gutters');
-        
+
         if (gutters) {
             const lineNumbers = gutters.querySelectorAll('.CodeMirror-linenumber');
             lineNumbers.forEach(lineNum => {
@@ -181,7 +187,7 @@ class EditorManager {
     // 設置自動保存 - 改為5分鐘
     setupAutoSave() {
         setInterval(() => {
-            if (wsManager.isConnected() && this.editor && this.isEditing && 
+            if (wsManager.isConnected() && this.editor && this.isEditing &&
                 Date.now() - this.lastAutoSave > 10000) { // 10秒無操作後才自動保存
                 this.saveCode(true); // 標記為自動保存
                 console.log('🔄 自動保存代碼');
@@ -199,7 +205,7 @@ class EditorManager {
             }
             return;
         }
-        
+
         const code = this.editor.getValue();
         let customName = null;
 
@@ -216,11 +222,11 @@ class EditorManager {
         // 生成默認名稱（如果沒有提供或為空）
         if (customName === null || customName === '') {
             const now = new Date();
-            customName = isAutoSave ? 
+            customName = isAutoSave ?
                          `自動保存 ${now.toLocaleString('zh-TW', { hour12: false })}` :
                          `手動保存 ${now.toLocaleString('zh-TW', { hour12: false })}`;
         }
-        
+
         this.saveToHistory(code, customName); // 將名稱傳遞給 saveToHistory
 
         wsManager.sendMessage({
@@ -273,7 +279,7 @@ class EditorManager {
     loadFromHistory(index) {
         if (index >= 0 && index < this.codeHistory.length) {
             const historyItem = this.codeHistory[index];
-            this.editor.setValue(historyItem.code);
+            this.editor.setValue(historyItem.code); // 載入歷史記錄時可以使用 setValue
             if (window.UI && typeof window.UI.showSuccessToast === 'function') {
                 window.UI.showSuccessToast(`已載入 ${historyItem.name} 的代碼版本`);
             } else {
@@ -292,7 +298,7 @@ class EditorManager {
             }
             return;
         }
-        
+
         if (!wsManager.currentRoom) {
             if (window.UI && typeof window.UI.showErrorToast === 'function') {
                 window.UI.showErrorToast('請先加入房間');
@@ -301,19 +307,19 @@ class EditorManager {
             }
             return;
         }
-        
+
         // 智能載入邏輯：先檢查是否已是最新版本
         console.log('🔍 檢查代碼版本狀態...');
-        
+
         // 請求載入房間最新代碼（服務器會返回最新版本信息）
         wsManager.sendMessage({
             type: 'load_code',
             roomId: wsManager.currentRoom,
             currentVersion: this.codeVersion // 發送當前版本號給服務器比較
         });
-        
+
         if (window.UI && typeof window.UI.showSuccessToast === 'function') {
-            window.UI.showSuccessToast('正在檢查最新代碼...');
+            window.UI.showInfoToast('正在檢查最新代碼...'); // 使用 showInfoToast
         } else {
             console.log('正在檢查最新代碼...');
         }
@@ -322,15 +328,15 @@ class EditorManager {
     // 運行代碼
     runCode() {
         const code = this.editor.getValue().trim();
-        
+
         if (!code) {
             this.showOutput('錯誤：請先輸入Python代碼', 'error');
             return;
         }
-        
+
         // 顯示運行中狀態
         this.showOutput('正在運行代碼...', 'info');
-        
+
         // 發送運行請求到服務器
         if (wsManager.isConnected()) {
             wsManager.sendMessage({
@@ -344,58 +350,111 @@ class EditorManager {
         }
     }
 
-    // 處理遠端代碼變更
+    // 處理遠端代碼變更 (核心修改部分，實現差異化更新)
     handleRemoteCodeChange(message) {
         console.log('📨 收到遠程代碼變更:', message);
-        
+
+        if (!this.editor) {
+            console.error('❌ 編輯器實例不存在');
+            return;
+        }
+
+        const remoteCode = message.code || '';
+        const currentLocalCode = this.editor.getValue();
+
+        // 1. 如果是自己的變更從伺服器回顯，只更新版本號，**不觸動編輯器內容**
+        // 這是確保游標不會因為自己的變更而跳動的關鍵。
+        if (message.userName === wsManager.currentUser) {
+            if (message.version !== undefined) {
+                this.codeVersion = message.version;
+                this.updateVersionDisplay();
+                console.log('✅ 收到自己的代碼回顯，更新版本:', message.version);
+            }
+            return;
+        }
+
+        // 2. 如果遠端代碼與本地代碼完全一致，只更新版本號（如果不同），然後返回
+        if (remoteCode === currentLocalCode) {
+            if (message.version !== undefined && this.codeVersion !== message.version) {
+                this.codeVersion = message.version;
+                this.updateVersionDisplay();
+                console.log('ℹ️ 遠程代碼與本地代碼一致，更新版本號:', message.version);
+            } else {
+                console.log('ℹ️ 遠程代碼與本地代碼一致，且版本號相同，無需更新。');
+            }
+            return;
+        }
+
+        // 3. 如果用戶正在編輯，則不自動更新內容，只提示。
+        // 這將導致暫時的內容不同步，但完全符合「不要有任何的自動移動」的需求。
+        if (this.isEditing) {
+            console.log('⚠️ 用戶正在編輯，不自動應用遠程變更。');
+            if (window.UI) {
+                window.UI.showInfoToast(`${message.userName} 更新了代碼。您正在編輯，未自動同步。`);
+            }
+            // 仍然可以更新版本號，表示遠端有新版本
+            if (message.version !== undefined) {
+                this.codeVersion = message.version;
+                this.updateVersionDisplay();
+            }
+            return;
+        }
+
+        // 4. 對於其他用戶的變更，且本地用戶沒有活躍編輯，執行差異化更新
         try {
-            // 直接設置編輯器的值
-            if (this.editor) {
-                // 保存當前游標位置和選擇範圍
-                const currentPosition = this.editor.getCursor();
-                const currentSelection = this.editor.getSelection();
-                
-                // 更新代碼
-                this.editor.setValue(message.code || '');
-                
-                // 更新版本號
-                if (message.version !== undefined) {
-                    this.codeVersion = message.version;
-                    this.updateVersionDisplay();
-                }
-                
-                // 如果是其他用戶的更新，恢復游標位置和選擇範圍
-                if (message.userName !== wsManager.currentUser) {
-                    // 確保游標位置在有效範圍內
-                    const totalLines = this.editor.lineCount();
-                    if (currentPosition.line < totalLines) {
-                        const lineContent = this.editor.getLine(currentPosition.line);
-                        this.editor.setCursor({
-                            line: currentPosition.line,
-                            ch: Math.min(currentPosition.ch, lineContent ? lineContent.length : 0)
-                        });
-                        
-                        // 如果有選擇範圍，也恢復它
-                        if (currentSelection && currentSelection.length > 0) {
-                            this.editor.setSelection(
-                                currentSelection.anchor || currentPosition,
-                                currentSelection.head || currentPosition
-                            );
-                        }
+            const diffs = this.dmp.diff_main(currentLocalCode, remoteCode);
+            this.dmp.diff_cleanupSemantic(diffs); // 可選：優化差異結果
+
+            // CodeMirror operation 批次處理變更，提升性能和穩定性，並盡量保持游標位置
+            this.editor.operation(() => {
+                let currentCursorPos = {line: 0, ch: 0}; // 追蹤編輯器中的當前位置 (index)
+
+                for (let i = 0; i < diffs.length; i++) {
+                    const diffType = diffs[i][0]; // 0: 相等, 1: 插入, -1: 刪除
+                    const diffText = diffs[i][1];
+
+                    if (diffType === 0) { // DIFF_EQUAL (相等部分)
+                        // 移動 CodeMirror 的游標位置到相等部分的末尾
+                        // 注意：這裡直接修改 CodeMirror 的游標位置，而不是使用 editor.setCursor
+                        // 因為我們是在 operation 內部進行操作。
+                        currentCursorPos = this.editor.posFromIndex(
+                            this.editor.indexFromPos(currentCursorPos) + diffText.length
+                        );
+                    } else if (diffType === 1) { // DIFF_INSERT (插入)
+                        // 在當前位置插入文本
+                        this.editor.replaceRange(diffText, currentCursorPos);
+                        // 插入後，新的游標位置移動到新插入文本的末尾
+                        currentCursorPos = this.editor.posFromIndex(
+                            this.editor.indexFromPos(currentCursorPos) + diffText.length
+                        );
+                    } else if (diffType === -1) { // DIFF_DELETE (刪除)
+                        // 刪除從當前位置開始的文本
+                        const endOfDeletePos = this.editor.posFromIndex(
+                            this.editor.indexFromPos(currentCursorPos) + diffText.length
+                        );
+                        this.editor.replaceRange('', currentCursorPos, endOfDeletePos);
+                        // 刪除後，當前位置保持不變
                     }
                 }
-                
-                console.log('✅ 已更新代碼，版本:', message.version);
-            } else {
-                console.error('❌ 編輯器實例不存在');
+            });
+
+            // 更新版本號
+            if (message.version !== undefined) {
+                this.codeVersion = message.version;
+                this.updateVersionDisplay();
             }
-            
-            // 可選：顯示提示
-            if (window.UI && message.userName !== wsManager.currentUser) {
+
+            console.log('✅ 已通過差異化更新代碼，版本:', message.version);
+
+            if (window.UI) {
                 window.UI.showInfoToast(`${message.userName} 更新了代碼`);
             }
+
         } catch (error) {
-            console.error('❌ 更新代碼時發生錯誤:', error);
+            console.error('❌ 更新代碼時發生錯誤 (差異化更新失敗):', error);
+            if (window.UI) {
+                window.UI.showErrorToast('代碼同步失敗，請嘗試手動載入最新版本。');
+            }
         }
     }
 
@@ -405,7 +464,7 @@ class EditorManager {
         console.log('   - 成功狀態:', result.success);
         console.log('   - 消息內容:', result.message);
         console.log('   - 時間戳:', result.timestamp);
-        
+
         if (result.success) {
             this.showOutput(result.message, 'success');
         } else {
@@ -417,10 +476,10 @@ class EditorManager {
     showOutput(content, type = 'success') {
         const outputDiv = document.getElementById('codeOutput');
         const outputContent = document.getElementById('outputContent');
-        
+
         // 顯示輸出區域
         outputDiv.style.display = 'block';
-        
+
         // 根據類型設置樣式
         let icon = '';
         switch (type) {
@@ -429,14 +488,14 @@ class EditorManager {
             case 'info': icon = 'ℹ️'; break;
             default: icon = '📝'; break;
         }
-        
+
         // 添加時間戳
         const timestamp = new Date().toLocaleTimeString();
         const output = `[${timestamp}] ${icon} ${content}\n`;
-        
+
         // 追加到輸出內容
         outputContent.innerHTML += output;
-        
+
         // 滾動到底部
         outputContent.scrollTop = outputContent.scrollHeight;
     }
@@ -479,7 +538,7 @@ class EditorManager {
         document.body.appendChild(textArea);
         textArea.focus();
         textArea.select();
-        
+
         try {
             const successful = document.execCommand('copy');
             if (successful) {
@@ -503,7 +562,7 @@ class EditorManager {
                 console.error('複製失敗，請手動複製');
             }
         }
-        
+
         document.body.removeChild(textArea);
     }
 
@@ -511,7 +570,7 @@ class EditorManager {
     downloadCode() {
         const code = this.editor.getValue();
         const filename = prompt('請輸入檔案名稱 (不需要 .py 副檔名):', 'my_python_code') || 'my_python_code';
-        
+
         const blob = new Blob([code], { type: 'text/plain' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -519,7 +578,7 @@ class EditorManager {
         a.download = `${filename}.py`;
         a.click();
         window.URL.revokeObjectURL(url);
-        
+
         if (window.UI && typeof window.UI.showSuccessToast === 'function') {
             window.UI.showSuccessToast(`檔案 "${filename}.py" 已下載`);
         } else {
@@ -539,14 +598,14 @@ class EditorManager {
     handleFileImport(event) {
         const file = event.target.files[0];
         if (!file) return;
-        
+
         // 檢查文件類型
         const fileName = file.name.toLowerCase();
         const validExtensions = ['.py', '.txt'];
-        const isValidFile = validExtensions.some(ext => fileName.endsWith(ext)) || 
-                           file.type === 'text/plain' || 
+        const isValidFile = validExtensions.some(ext => fileName.endsWith(ext)) ||
+                           file.type === 'text/plain' ||
                            file.type === 'text/x-python';
-        
+
         if (!isValidFile) {
             if (window.UI && typeof window.UI.showErrorToast === 'function') {
                 window.UI.showErrorToast('只支援 .py 和 .txt 檔案');
@@ -555,7 +614,7 @@ class EditorManager {
             }
             return;
         }
-        
+
         // 檢查文件大小 (1MB 限制)
         if (file.size > 1024 * 1024) {
             if (window.UI && typeof window.UI.showErrorToast === 'function') {
@@ -565,26 +624,46 @@ class EditorManager {
             }
             return;
         }
-        
+
         // 檢查是否需要覆蓋現有內容
         if (this.editor.getValue().trim()) {
-            if (!confirm('當前編輯器有內容，是否要覆蓋？')) {
-                // 清除文件輸入，允許重新選擇同一文件
-                event.target.value = '';
-                return;
+            // 使用自定義確認框取代 confirm()
+            if (window.UI && typeof window.UI.showConfirmModal === 'function') {
+                window.UI.showConfirmModal(
+                    '覆蓋確認',
+                    '當前編輯器有內容，是否要覆蓋？',
+                    () => { // 確認
+                        this.readFileAndSetEditor(file, event.target);
+                    },
+                    () => { // 取消
+                        event.target.value = '';
+                    }
+                );
+            } else {
+                // 如果沒有自定義確認框，退回使用瀏覽器 confirm，但建議替換
+                if (!confirm('當前編輯器有內容，是否要覆蓋？')) {
+                    event.target.value = '';
+                    return;
+                }
+                this.readFileAndSetEditor(file, event.target);
             }
+        } else {
+            this.readFileAndSetEditor(file, event.target);
         }
-        
+    }
+
+    // 輔助函式：讀取檔案內容並設置編輯器
+    readFileAndSetEditor(file, fileInputTarget) {
         const reader = new FileReader();
         reader.onload = (e) => {
-            this.editor.setValue(e.target.result);
+            this.editor.setValue(e.target.result); // 導入檔案時使用 setValue
             if (window.UI && typeof window.UI.showSuccessToast === 'function') {
                 window.UI.showSuccessToast(`檔案 "${file.name}" 載入成功`);
             } else {
                 console.log(`檔案 "${file.name}" 載入成功`);
             }
             // 清除文件輸入
-            event.target.value = '';
+            fileInputTarget.value = '';
         };
         reader.onerror = () => {
             if (window.UI && typeof window.UI.showErrorToast === 'function') {
@@ -592,48 +671,53 @@ class EditorManager {
             } else {
                 console.error('檔案讀取失敗');
             }
-            event.target.value = '';
+            fileInputTarget.value = '';
         };
         reader.readAsText(file);
     }
 
-    // 設置代碼
+    // 設置代碼 (此函式用於載入歷史版本或從伺服器全量載入，非實時同步)
     setCode(code, version = null) {
         if (this.editor) {
             // 如果正在編輯，不要打斷用戶
             if (this.isEditing) {
                 console.log('⚠️ 用戶正在編輯，暫不更新代碼');
+                // 在此處可以添加提示用戶有新版本可載入的 UI 元素
+                if (window.UI) {
+                    window.UI.showInfoToast('您正在編輯，有新版本可手動載入。');
+                }
                 return;
             }
-            
+
             try {
-                // 保存當前游標和滾動位置
+                // 保存當前游標和滾動位置，以便全量替換後恢復
                 const cursor = this.editor.getCursor();
                 const scroll = this.editor.getScrollInfo();
-                
+
                 // 獲取當前內容範圍
                 const lastLine = this.editor.lastLine();
                 const lastCh = this.editor.getLine(lastLine).length;
-                
-                // 使用 replaceRange 更新內容
+
+                // 使用 replaceRange 更新內容 (全量替換，游標仍會重置，但隨後會恢復)
                 this.editor.replaceRange(
                     code || '',
                     {line: 0, ch: 0},
                     {line: lastLine, ch: lastCh}
                 );
-                
+
                 // 立即恢復游標和滾動位置
                 this.editor.setCursor(cursor);
                 this.editor.scrollTo(scroll.left, scroll.top);
-                
+
                 // 更新版本號
                 if (version !== null) {
                     this.codeVersion = version;
                     this.updateVersionDisplay();
                     console.log(`✅ 代碼已設置 - 長度: ${(code || '').length}, 版本: ${this.codeVersion}`);
                 }
+
             } catch (error) {
-                console.error('設置代碼時發生錯誤:', error);
+                console.error('❌ 設定代碼時發生錯誤:', error);
             }
         }
     }
@@ -669,24 +753,24 @@ class EditorManager {
     // 強化編輯狀態管理 - 簡化且穩定的編輯狀態追蹤
     setupEditingStateTracking() {
         console.log('🔧 設置強化編輯狀態追蹤系統 (V2 - 更敏感)');
-        
+
         // 1. 主要編輯事件監聽 - 擴大觸發範圍
         this.editor.on('change', (cm, change) => {
-            console.log('📝 代碼變更事件 - 來源:', change.origin);
-            
+            // console.log('📝 代碼變更事件 - 來源:', change.origin); // 輸出較多，暫時註釋
+
             // 🔧 擴大用戶編輯行為檢測範圍
-            const userEditOrigins = ['+input', 'paste', '+delete', '*compose', 'cut'];
+            const userEditOrigins = ['+input', 'paste', '+delete', '*compose', 'cut', 'undo', 'redo']; // 添加 undo/redo
             const isUserEdit = userEditOrigins.includes(change.origin);
-            
+
             if (isUserEdit) {
                 // 用戶開始編輯
                 this.isEditing = true;
                 this.editStartTime = Date.now();
-                console.log('✏️ 編輯狀態已激活 (來源:', change.origin, ')');
-                
+                // console.log('✏️ 編輯狀態已激活 (來源:', change.origin, ')'); // 輸出較多，暫時註釋
+
                 // 🔧 立即重置編輯超時（縮短到5秒）
                 this.resetEditingTimeout();
-                
+
                 // 延遲發送代碼變更
                 clearTimeout(this.changeTimeout);
                 this.changeTimeout = setTimeout(() => {
@@ -694,101 +778,88 @@ class EditorManager {
                         this.sendCodeChange();
                     }
                 }, 300); // 🔧 縮短延遲到300ms
-                
+
             } else if (change.origin === 'setValue') {
-                // 程式設置代碼，不觸發編輯狀態
+                // 程式設置代碼，不觸發編輯狀態，只用於全量載入
                 console.log('🔄 程式設置代碼，保持原編輯狀態');
             }
         });
-        
+
         // 2. 🔧 強化按鍵監聽 - 幾乎所有按鍵都觸發編輯狀態
         this.editor.getWrapperElement().addEventListener('keydown', (event) => {
-            // 只排除最基本的導航鍵
-            const excludeKeys = ['Control', 'Alt', 'Shift', 'Meta', 'CapsLock', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12'];
-            const isArrowKey = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key);
-            
-            // 🔧 更寬鬆的條件：Tab, Enter, Backspace, Delete 都觸發編輯狀態
-            const isEditingKey = ['Tab', 'Enter', 'Backspace', 'Delete', 'Space'].includes(event.key);
-            
-            if (!excludeKeys.includes(event.key) && (!isArrowKey || isEditingKey)) {
+            // 只排除最基本的導航鍵、修飾鍵和功能鍵
+            const excludeKeys = [
+                'Control', 'Alt', 'Shift', 'Meta', 'CapsLock', 'Tab', // Tab現在應該觸發編輯
+                'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12',
+                'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', // 箭頭鍵只移動游標，不視為編輯
+                'Home', 'End', 'PageUp', 'PageDown', 'Insert'
+            ];
+
+            // 只有當按鍵不是排除列表中的，才觸發編輯狀態
+            if (!excludeKeys.includes(event.key)) {
                 this.isEditing = true;
                 this.editStartTime = Date.now();
-                console.log('⌨️ 按鍵觸發編輯狀態:', event.key);
+                // console.log('⌨️ 按鍵觸發編輯狀態:', event.key); // 輸出較多，暫時註釋
                 this.resetEditingTimeout();
             }
         });
-        
+
         // 3. 文本選擇也觸發編輯狀態（準備編輯）
         this.editor.on('cursorActivity', () => {
             if (this.editor.somethingSelected()) {
                 this.isEditing = true;
                 this.editStartTime = Date.now();
-                console.log('🖱️ 文本選擇觸發編輯狀態');
+                // console.log('🖱️ 文本選擇觸發編輯狀態'); // 輸出較多，暫時註釋
                 this.resetEditingTimeout();
             }
         });
-        
-        // 4. 監聽粘貼事件
-        this.editor.getWrapperElement().addEventListener('paste', () => {
-            this.isEditing = true;
-            this.editStartTime = Date.now();
-            console.log('📋 粘貼觸發編輯狀態');
-            this.resetEditingTimeout();
-        });
-        
-        // 5. 監聽剪切事件
-        this.editor.getWrapperElement().addEventListener('cut', () => {
-            this.isEditing = true;
-            this.editStartTime = Date.now();
-            console.log('✂️ 剪切觸發編輯狀態');
-            this.resetEditingTimeout();
-        });
-        
-        // 6. 獲得焦點時也可能開始編輯
+
+        // 4. 監聽粘貼事件 (已由 change.origin='paste' 處理)
+        // 5. 監聽剪切事件 (已由 change.origin='cut' 處理)
+
+        // 6. 獲得焦點時
         this.editor.on('focus', () => {
             console.log('👁️ 編輯器獲得焦點');
-            // 不立即設置編輯狀態，但準備好快速響應
+            // 獲得焦點本身不立即設置 isEditing，因為用戶可能只是點擊一下。
+            // 實際編輯行為（如 typing, paste, selection）才會設置 isEditing。
         });
-        
-        // 7. 🔧 延長失去焦點的重置時間
+
+        // 7. 失去焦點時重置編輯狀態
         this.editor.on('blur', () => {
-            console.log('👋 編輯器失去焦點');
-            // 🔧 延遲5秒重置，給用戶時間回到編輯器
-            setTimeout(() => {
-                if (this.isEditing && (Date.now() - this.editStartTime) > 10000) {
-                    this.isEditing = false;
-                    console.log('⏹️ 失去焦點超時，重置編輯狀態');
-                }
-            }, 5000); // 延長到5秒
+            console.log('👋 編輯器失去焦點，重置編輯狀態');
+            this.isEditing = false;
+            clearTimeout(this.editingTimeout); // 清除任何 pending 的超時
         });
-        
-        // 8. 🔧 調整定期狀態監控（降低頻率，延長超時）
+
+        // 8. 定期狀態監控（降低頻率，延長超時）
+        // 這個 setInterval 是作為一個最終的保險，如果其他事件未能正確重置 isEditing
         setInterval(() => {
             if (this.isEditing) {
                 const duration = (Date.now() - this.editStartTime) / 1000;
-                if (duration > 60) { // 🔧 延長到60秒自動重置
+                if (duration > 30) { // 30秒無活動自動重置
                     this.isEditing = false;
-                    console.log('⏰ 編輯狀態超時自動重置 (60秒)');
+                    console.log('⏰ 編輯狀態超時自動重置 (30秒無活動)');
                 }
             }
         }, 15000); // 每15秒檢查一次
         
         console.log('✅ 強化編輯狀態追蹤系統設置完成 (V2)');
     }
-    
+
     // 🔧 調整編輯超時計時器（縮短超時時間）
     resetEditingTimeout() {
         clearTimeout(this.editingTimeout);
         this.editingTimeout = setTimeout(() => {
             if (this.isEditing) {
-                const duration = (Date.now() - this.editStartTime) / 1000;
-                // 🔧 只有在10秒無活動且總編輯時間超過20秒才重置
-                if (duration > 20) {
+                 const duration = (Date.now() - this.editStartTime) / 1000;
+                 if (duration > 5) { // 5秒無活動則視為不再活躍編輯
                     this.isEditing = false;
-                    console.log('⏹️ 編輯狀態超時重置 (20秒總時長)');
-                }
+                    console.log('⏹️ 編輯狀態超時重置 (5秒無活動)');
+                    // 這裡可以觸發一次保存或同步，確保最新狀態已發送
+                    this.sendCodeChange(true); // 強制發送最後的變更
+                 }
             }
-        }, 10000); // 10秒超時檢查
+        }, 5000); // 5秒超時檢查
     }
 
     // 發送代碼變更 - 🔧 增加衝突預警機制
@@ -799,77 +870,31 @@ class EditorManager {
         }
 
         const code = this.editor.getValue();
-        
+
         console.log(`📤 準備發送代碼變更 - 強制發送: ${forceUpdate}, 用戶: ${wsManager.currentUser}`);
-        
+
         const message = {
             type: 'code_change',
             code: code,
             userName: wsManager.currentUser,
             timestamp: Date.now(),
-            version: this.codeVersion + 1
+            // 🔧 新增：標記是否為預警後的發送
+            // hasConflictWarning: !forceUpdate && this.shouldShowConflictWarning() // 衝突預警暫時不啟用
         };
-        
+
         // 如果是強制更新，添加標記
         if (forceUpdate) {
             message.forceUpdate = true;
             console.log('🔥 強制更新標記已添加');
         }
-        
+
         wsManager.sendMessage(message);
 
-        // 顯示協作提醒
-        if (this.collaboratingUsers.size > 0) {
-            UI.showCollaborationAlert(this.collaboratingUsers);
+        // 顯示協作提醒 (如果需要)
+        if (this.collaboratingUsers.size > 0 && window.UI && typeof window.UI.showCollaborationAlert === 'function') {
+            // UI.showCollaborationAlert(this.collaboratingUsers); // 協作提醒如果不需要就註釋掉
         }
     }
-
-    // 🆕 檢查是否需要顯示衝突預警
-    /* 暫時註解衝突預警相關功能
-    shouldShowConflictWarning() {
-        // 檢查是否有其他用戶正在活躍編輯
-        const activeUsers = this.getActiveCollaborators();
-        
-        // 必須有兩個以上的用戶在同一房間
-        if (activeUsers.length < 1) {
-            return false;
-        }
-        
-        // 檢查最近是否收到其他用戶的代碼變更（30秒內）
-        const recentActivity = this.lastRemoteChangeTime && 
-                             (Date.now() - this.lastRemoteChangeTime) < 30000;
-        
-        console.log(`🔍 衝突預警檢查:`);
-        console.log(`   - 其他活躍用戶: ${activeUsers.length > 0 ? activeUsers.join(', ') : '無'}`);
-        console.log(`   - 最近活動: ${recentActivity ? '是' : '否'}`);
-        
-        return activeUsers.length > 0 && recentActivity;
-    }
-
-    // 獲取衝突預警信息
-    getConflictWarningInfo() {
-        return {
-            activeUsers: this.getActiveCollaborators()
-        };
-    }
-    */
-
-    // 獲取活躍協作者列表
-    /* 暫時註解衝突預警相關功能
-    getActiveCollaborators() {
-        const activeUsers = [];
-        const now = Date.now();
-        
-        this.collaboratingUsers.forEach((lastActive, user) => {
-            // 如果用戶在最近30秒內有活動，視為活躍
-            if (now - lastActive < 30000) {
-                activeUsers.push(user);
-            }
-        });
-        
-        return activeUsers;
-    }
-    */
 
     // 載入歷史記錄從本地存儲
     loadHistoryFromStorage() {
@@ -915,23 +940,48 @@ class EditorManager {
                 <p class="mb-1">${(item.code || '').substring(0, 100)}${item.code && item.code.length > 100 ? '...' : ''}</p>
                 <small>保存者: ${item.savedBy || '未知'}</small>
             `;
-            
+
             listItem.addEventListener('click', () => {
-                if (confirm('確定要載入這個歷史版本嗎？當前的變更將會被覆蓋。')) {
-                    this.editor.setValue(item.code || '');
-                    this.codeVersion = item.version || 0;
-                    this.updateVersionDisplay();
-                    
-                    // 關閉模態框
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('historyModal'));
-                    if (modal) {
-                        modal.hide();
+                // 使用自定義確認框取代 confirm()
+                if (window.UI && typeof window.UI.showConfirmModal === 'function') {
+                    window.UI.showConfirmModal(
+                        '載入確認',
+                        '確定要載入這個歷史版本嗎？當前的變更將會被覆蓋。',
+                        () => { // 確認
+                            this.editor.setValue(item.code || ''); // 載入歷史版本使用 setValue
+                            this.codeVersion = item.version || 0;
+                            this.updateVersionDisplay();
+
+                            // 關閉模態框
+                            const modal = bootstrap.Modal.getInstance(document.getElementById('historyModal'));
+                            if (modal) {
+                                modal.hide();
+                            }
+                            console.log(`📂 載入歷史版本: ${item.name || '未命名'}`);
+                            if (window.UI) {
+                                window.UI.showSuccessToast(`已載入 ${item.name || '歷史版本'}`);
+                            }
+                        },
+                        () => { // 取消
+                            console.log('取消載入歷史版本。');
+                        }
+                    );
+                } else {
+                    // 如果沒有自定義確認框，退回使用瀏覽器 confirm，但建議替換
+                    if (confirm('確定要載入這個歷史版本嗎？當前的變更將會被覆蓋。')) {
+                        this.editor.setValue(item.code || '');
+                        this.codeVersion = item.version || 0;
+                        this.updateVersionDisplay();
+
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('historyModal'));
+                        if (modal) {
+                            modal.hide();
+                        }
+                        console.log(`📂 載入歷史版本: ${item.name || '未命名'}`);
                     }
-                    
-                    console.log(`📂 載入歷史版本: ${item.name || '未命名'}`);
                 }
             });
-            
+
             historyList.appendChild(listItem);
         });
 
@@ -940,8 +990,8 @@ class EditorManager {
 }
 
 // 全局編輯器管理器實例
-const Editor = new EditorManager(); 
+const Editor = new EditorManager();
 
 // 確保全域可訪問性 - 修復WebSocket訪問問題
 window.Editor = Editor;
-console.log('✅ 全域編輯器實例已創建並設置到 window.Editor:', window.Editor); 
+console.log('✅ 全域編輯器實例已創建並設置到 window.Editor:', window.Editor);
