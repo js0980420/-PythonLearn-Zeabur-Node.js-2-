@@ -1021,8 +1021,20 @@ function handleTeacherMonitor(ws, message) {
     if (action === 'register') {
         // 註冊為教師監控
         teacherMonitors.add(ws.userId);
+        
+        // 更新用戶資訊
         if (users[ws.userId]) {
             users[ws.userId].isTeacher = true;
+            users[ws.userId].type = 'teacher';
+            
+            // 如果在房間中，更新房間中的用戶資訊
+            if (users[ws.userId].roomId && rooms[users[ws.userId].roomId]) {
+                const room = rooms[users[ws.userId].roomId];
+                if (room.users[ws.userId]) {
+                    room.users[ws.userId].isTeacher = true;
+                    room.users[ws.userId].type = 'teacher';
+                }
+            }
         }
         
         console.log(`👨‍🏫 教師監控已註冊: ${ws.userId}`);
@@ -1044,28 +1056,19 @@ function handleTeacherMonitor(ws, message) {
         teacherMonitors.delete(ws.userId);
         if (users[ws.userId]) {
             users[ws.userId].isTeacher = false;
+            users[ws.userId].type = 'student';
+            
+            // 如果在房間中，更新房間中的用戶資訊
+            if (users[ws.userId].roomId && rooms[users[ws.userId].roomId]) {
+                const room = rooms[users[ws.userId].roomId];
+                if (room.users[ws.userId]) {
+                    room.users[ws.userId].isTeacher = false;
+                    room.users[ws.userId].type = 'student';
+                }
+            }
         }
         
         console.log(`👨‍🏫 教師監控已取消註冊: ${ws.userId}`);
-    } else {
-        // 默認行為：如果沒有指定action，直接註冊為教師
-        teacherMonitors.add(ws.userId);
-        if (users[ws.userId]) {
-            users[ws.userId].isTeacher = true;
-        }
-        
-        console.log(`👨‍🏫 教師監控已自動註冊: ${ws.userId} (默認行為)`);
-        
-        // 發送歡迎消息
-        ws.send(JSON.stringify({
-            type: 'teacher_monitor_registered',
-            userId: ws.userId,
-            message: '教師監控已連接',
-            timestamp: Date.now()
-        }));
-        
-        // 發送當前統計信息
-        broadcastStatsToTeachers();
     }
 }
 
@@ -1191,6 +1194,7 @@ function handleTeacherChat(ws, message) {
         
         room.chatHistory.push(teacherChatMessage);
         
+        // 廣播給房間內的所有用戶
         broadcastToRoom(targetRoom, {
             type: 'chat_message',
             ...teacherChatMessage

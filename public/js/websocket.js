@@ -380,11 +380,37 @@ class WebSocketManager {
                 // 降級處理：直接更新代碼
                 if (window.Editor && typeof window.Editor.editor?.setValue === 'function') {
                     console.log('🔄 降級處理：直接設置代碼');
-                    window.Editor.editor.setValue(message.code || '');
+                    
+                    // 保存當前游標位置和選擇範圍
+                    const editor = window.Editor.editor;
+                    const currentPosition = editor.getCursorPosition();
+                    const currentSelection = editor.getSelection();
+                    
+                    // 更新代碼
+                    editor.setValue(message.code || '');
+                    
+                    // 更新版本號
                     if (message.version !== undefined) {
                         window.Editor.codeVersion = message.version;
                         if (typeof window.Editor.updateVersionDisplay === 'function') {
                             window.Editor.updateVersionDisplay();
+                        }
+                    }
+                    
+                    // 如果是其他用戶的更新，恢復游標位置和選擇範圍
+                    if (message.userName !== this.currentUser) {
+                        // 確保游標位置在有效範圍內
+                        const lines = editor.session.getLength();
+                        if (currentPosition.row < lines) {
+                            editor.moveCursorTo(
+                                currentPosition.row,
+                                Math.min(currentPosition.column, editor.session.getLine(currentPosition.row).length)
+                            );
+                            
+                            // 如果有選擇範圍，也恢復它
+                            if (!currentSelection.isEmpty()) {
+                                editor.selection.setRange(currentSelection);
+                            }
                         }
                     }
                 } else {
@@ -411,9 +437,61 @@ class WebSocketManager {
 
     // 處理聊天消息
     handleChatMessage(message) {
+        console.log('💬 收到聊天消息:', message);
+        
         if (window.Chat) {
             const { userName, roomName, message: chatText, isTeacher } = message;
-            window.Chat.addMessage(userName, chatText, false, isTeacher, roomName);
+            
+            // 檢查是否為教師消息
+            const isTeacherMessage = isTeacher || message.type === 'teacher_chat' || userName.includes('教師');
+            
+            // 添加到聊天區域
+            window.Chat.addMessage(
+                userName,
+                chatText,
+                false, // 不是系統消息
+                isTeacherMessage, // 是否為教師消息
+                roomName || this.currentRoom // 使用消息中的房間名稱，如果沒有則使用當前房間
+            );
+            
+            // 如果是教師消息，播放提示音
+            if (isTeacherMessage) {
+                try {
+                    if (window.AudioContext || window.webkitAudioContext) {
+                        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                        const oscillator = audioContext.createOscillator();
+                        const gainNode = audioContext.createGain();
+                        
+                        oscillator.connect(gainNode);
+                        gainNode.connect(audioContext.destination);
+                        
+                        oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+                        oscillator.frequency.setValueAtTime(600, audioContext.currentTime + 0.1);
+                        
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                        
+                        oscillator.start(audioContext.currentTime);
+                        oscillator.stop(audioContext.currentTime + 0.3);
+                    }
+                } catch (error) {
+                    console.log('🔇 無法播放提示音:', error.message);
+                }
+            }
+            
+            // 如果消息不是來自當前用戶，顯示通知
+            if (userName !== this.currentUser && window.UI) {
+                const messageType = isTeacherMessage ? 'success' : 'info';
+                const icon = isTeacherMessage ? '👨‍🏫' : '💬';
+                window.UI.showToast(
+                    `${icon} 新消息`,
+                    `${userName}: ${chatText}`,
+                    messageType,
+                    5000
+                );
+            }
+        } else {
+            console.warn('⚠️ Chat 模組未就緒，無法顯示聊天消息');
         }
     }
 
