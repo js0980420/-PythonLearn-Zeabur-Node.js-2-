@@ -270,6 +270,8 @@ class ChatManager {
             return;
         }
         
+        console.log(`💬 添加聊天消息:`, { userName, isSystem, isTeacher, roomName });
+        
         const messageDiv = document.createElement('div');
         let messageClass = 'chat-message';
         
@@ -291,11 +293,16 @@ class ChatManager {
             // 為教師消息添加特殊標識
             const userDisplay = isTeacher ? `👨‍🏫 ${userName}` : userName;
             const roomDisplay = roomName ? `<span class="chat-message-room">[${roomName}]</span> ` : '';
+            const timeString = new Date().toLocaleTimeString('zh-TW', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            
             messageDiv.innerHTML = `
                 <div class="chat-message-header">
                     <span class="chat-message-user">${userDisplay}</span>
                     ${roomDisplay}
-                    <span class="chat-message-time">${new Date().toLocaleTimeString('zh-TW')}</span>
+                    <span class="chat-message-time">${timeString}</span>
                 </div>
                 <div class="chat-message-content">${this.escapeHtml(message)}</div>
             `;
@@ -303,6 +310,11 @@ class ChatManager {
         
         this.chatContainer.appendChild(messageDiv);
         this.scrollToBottom();
+        
+        // 如果是教師消息，播放提示音
+        if (isTeacher) {
+            this.playNotificationSound();
+        }
     }
 
     // 設置聊天消息樣式
@@ -415,6 +427,31 @@ class ChatManager {
     clearChat() {
         if (this.chatContainer) {
             this.chatContainer.innerHTML = '';
+        }
+    }
+
+    // 播放提示音
+    playNotificationSound() {
+        try {
+            if (window.AudioContext || window.webkitAudioContext) {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(600, audioContext.currentTime + 0.1);
+                
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.3);
+            }
+        } catch (error) {
+            console.log('🔇 無法播放提示音:', error.message);
         }
     }
 }

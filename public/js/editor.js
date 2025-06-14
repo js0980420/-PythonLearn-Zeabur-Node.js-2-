@@ -784,7 +784,6 @@ class EditorManager {
         
         console.log(`📤 準備發送代碼變更 - 強制發送: ${forceUpdate}, 用戶: ${wsManager.currentUser}`);
         
-        /* 暫時註解衝突檢測
         // 🔧 新增：衝突預警檢查（只在非強制更新時進行）
         if (!forceUpdate && this.shouldShowConflictWarning()) {
             const conflictInfo = this.getConflictWarningInfo();
@@ -816,13 +815,14 @@ class EditorManager {
                 }
             }
         }
-        */
         
         const message = {
             type: 'code_change',
             code: code,
             userName: wsManager.currentUser,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            // 🔧 新增：標記是否為預警後的發送
+            hasConflictWarning: !forceUpdate && this.shouldShowConflictWarning()
         };
         
         // 如果是強制更新，添加標記
@@ -832,54 +832,48 @@ class EditorManager {
         }
         
         wsManager.sendMessage(message);
+
+        // 顯示協作提醒
+        if (this.collaboratingUsers.size > 0) {
+            UI.showCollaborationAlert(this.collaboratingUsers);
+        }
     }
 
     // 🆕 檢查是否需要顯示衝突預警
-    /* 暫時註解衝突預警相關功能
     shouldShowConflictWarning() {
         // 檢查是否有其他用戶正在活躍編輯
         const activeUsers = this.getActiveCollaborators();
-        
-        // 必須有兩個以上的用戶在同一房間
-        if (activeUsers.length < 1) {
-            return false;
-        }
+        const hasOtherActiveUsers = activeUsers.length > 0;
         
         // 檢查最近是否收到其他用戶的代碼變更（30秒內）
         const recentActivity = this.lastRemoteChangeTime && 
-                             (Date.now() - this.lastRemoteChangeTime) < 30000;
+                              (Date.now() - this.lastRemoteChangeTime) < 30000;
         
         console.log(`🔍 衝突預警檢查:`);
         console.log(`   - 其他活躍用戶: ${activeUsers.length > 0 ? activeUsers.join(', ') : '無'}`);
         console.log(`   - 最近活動: ${recentActivity ? '是' : '否'}`);
         
-        return activeUsers.length > 0 && recentActivity;
+        return hasOtherActiveUsers || recentActivity;
     }
 
-    // 獲取衝突預警信息
+    // 🆕 獲取衝突預警信息
     getConflictWarningInfo() {
+        const activeUsers = this.getActiveCollaborators();
         return {
-            activeUsers: this.getActiveCollaborators()
+            activeUsers: activeUsers,
+            lastActivity: this.lastRemoteChangeTime ? 
+                         new Date(this.lastRemoteChangeTime).toLocaleTimeString() : 
+                         '未知'
         };
     }
-    */
 
     // 🆕 獲取當前活躍的協作者列表
-    /* 暫時註解衝突預警相關功能
     getActiveCollaborators() {
-        const activeUsers = [];
-        const now = Date.now();
-        
-        this.collaboratingUsers.forEach((lastActive, user) => {
-            // 如果用戶在最近30秒內有活動，視為活躍
-            if (now - lastActive < 30000) {
-                activeUsers.push(user);
-            }
-        });
-        
-        return activeUsers;
+        // 這個方法需要與用戶列表管理結合
+        // 目前先返回已知的協作用戶
+        const collaborators = Array.from(this.collaboratingUsers || []);
+        return collaborators.filter(user => user !== wsManager.currentUser);
     }
-    */
 
     // 載入歷史記錄從本地存儲
     loadHistoryFromStorage() {
