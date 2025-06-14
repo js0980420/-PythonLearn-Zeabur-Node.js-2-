@@ -72,6 +72,12 @@ class EditorManager {
         // 載入歷史記錄
         this.loadHistoryFromStorage();
 
+        // 初始化事件監聽
+        this.initializeEventListeners();
+        
+        // 初始化衝突分析按鈕
+        this.initConflictAnalysisButton();
+
         // 只刷新編輯器，不設置焦點和游標位置
         setTimeout(() => {
             if (this.editor) {
@@ -849,52 +855,209 @@ class EditorManager {
         }
     }
 
-    // 🆕 檢查是否需要顯示衝突預警
-    /* 暫時註解衝突預警相關功能
+    // 檢查是否應該顯示衝突預警
     shouldShowConflictWarning() {
-        // 檢查是否有其他用戶正在活躍編輯
-        const activeUsers = this.getActiveCollaborators();
+        // 檢查是否有其他用戶正在編輯
+        const otherEditing = Array.from(this.collaboratingUsers.values()).some(user => 
+            user.isEditing && user.userName !== wsManager.currentUser
+        );
         
-        // 必須有兩個以上的用戶在同一房間
-        if (activeUsers.length < 1) {
-            return false;
-        }
-        
-        // 檢查最近是否收到其他用戶的代碼變更（30秒內）
-        const recentActivity = this.lastRemoteChangeTime && 
-                             (Date.now() - this.lastRemoteChangeTime) < 30000;
-        
-        console.log(`🔍 衝突預警檢查:`);
-        console.log(`   - 其他活躍用戶: ${activeUsers.length > 0 ? activeUsers.join(', ') : '無'}`);
-        console.log(`   - 最近活動: ${recentActivity ? '是' : '否'}`);
-        
-        return activeUsers.length > 0 && recentActivity;
+        return otherEditing;
     }
 
-    // 獲取衝突預警信息
-    getConflictWarningInfo() {
-        return {
-            activeUsers: this.getActiveCollaborators()
-        };
-    }
-    */
-
-    // 獲取活躍協作者列表
-    /* 暫時註解衝突預警相關功能
-    getActiveCollaborators() {
-        const activeUsers = [];
-        const now = Date.now();
+    // 顯示衝突預警
+    showConflictWarning(editingUsers) {
+        if (!window.UI) return;
         
-        this.collaboratingUsers.forEach((lastActive, user) => {
-            // 如果用戶在最近30秒內有活動，視為活躍
-            if (now - lastActive < 30000) {
-                activeUsers.push(user);
-            }
+        const editingUserNames = editingUsers
+            .filter(user => user.userName !== wsManager.currentUser)
+            .map(user => user.userName)
+            .join(', ');
+            
+        const warningDiv = document.createElement('div');
+        warningDiv.className = 'conflict-warning';
+        warningDiv.innerHTML = `
+            <div class="alert alert-warning" role="alert">
+                <h5>⚠️ 協作衝突預警</h5>
+                <p>${editingUserNames} 正在編輯代碼。繼續編輯可能會導致衝突。</p>
+                <div class="btn-group">
+                    <button class="btn btn-sm btn-info analyze-conflict">
+                        <i class="fas fa-robot"></i> AI分析建議
+                    </button>
+                    <button class="btn btn-sm btn-secondary dismiss-warning">
+                        <i class="fas fa-times"></i> 我知道了
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        // 添加按鈕事件
+        warningDiv.querySelector('.analyze-conflict').addEventListener('click', () => {
+            this.showAIConflictAnalysis(editingUsers);
         });
         
-        return activeUsers;
+        warningDiv.querySelector('.dismiss-warning').addEventListener('click', () => {
+            warningDiv.remove();
+        });
+        
+        // 顯示警告
+        document.body.appendChild(warningDiv);
     }
-    */
+
+    // 顯示 AI 衝突分析
+    async showAIConflictAnalysis(editingUsers) {
+        try {
+            const currentCode = this.editor.getValue();
+            const editingUserNames = editingUsers
+                .filter(user => user.userName !== wsManager.currentUser)
+                .map(user => user.userName)
+                .join(', ');
+            
+            // 準備發送給 AI 的數據
+            const analysisData = {
+                current_code: currentCode,
+                editing_users: editingUserNames,
+                current_user: wsManager.currentUser,
+                context: {
+                    is_editing: this.isEditing,
+                    code_version: this.codeVersion,
+                    timestamp: Date.now()
+                }
+            };
+            
+            // 調用 AI 助教 API
+            const response = await fetch('/api/ai-assistant/conflict-analysis', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(analysisData)
+            });
+            
+            if (!response.ok) {
+                throw new Error('AI 分析請求失敗');
+            }
+            
+            const result = await response.json();
+            
+            // 顯示 AI 分析結果
+            window.UI.showAIAnalysis({
+                title: '🤖 AI衝突分析建議',
+                content: result.analysis,
+                suggestions: result.suggestions
+            });
+            
+        } catch (error) {
+            console.error('AI 衝突分析失敗:', error);
+            window.UI.showErrorToast('AI 分析暫時無法使用，請稍後再試');
+        }
+    }
+
+    // 模擬衝突操作分析
+    async simulateConflictOperation(operation) {
+        try {
+            const currentCode = this.editor.getValue();
+            
+            // 準備發送給 AI 的數據
+            const simulationData = {
+                current_code: currentCode,
+                operation: operation,
+                current_user: wsManager.currentUser,
+                context: {
+                    is_editing: this.isEditing,
+                    code_version: this.codeVersion,
+                    collaborating_users: Array.from(this.collaboratingUsers.values()),
+                    timestamp: Date.now()
+                }
+            };
+            
+            // 調用 AI 助教 API
+            const response = await fetch('/api/ai-assistant/simulate-conflict', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(simulationData)
+            });
+            
+            if (!response.ok) {
+                throw new Error('AI 模擬分析請求失敗');
+            }
+            
+            const result = await response.json();
+            
+            // 顯示模擬分析結果
+            window.UI.showAIAnalysis({
+                title: '🤖 操作衝突模擬分析',
+                content: result.analysis,
+                risks: result.risks,
+                recommendations: result.recommendations,
+                steps: result.suggested_steps
+            });
+            
+        } catch (error) {
+            console.error('AI 模擬分析失敗:', error);
+            window.UI.showErrorToast('AI 模擬分析暫時無法使用，請稍後再試');
+        }
+    }
+
+    // 初始化衝突分析按鈕
+    initConflictAnalysisButton() {
+        const conflictBtn = document.querySelector('#conflictAnalysisBtn');
+        if (!conflictBtn) return;
+        
+        const operationMenu = document.createElement('div');
+        operationMenu.className = 'operation-menu d-none';
+        operationMenu.innerHTML = `
+            <div class="card">
+                <div class="card-header">
+                    <h6>選擇要模擬的操作</h6>
+                </div>
+                <div class="card-body">
+                    <button class="btn btn-sm btn-outline-primary mb-2" data-operation="load">
+                        <i class="fas fa-file-import"></i> 載入檔案
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary mb-2" data-operation="import">
+                        <i class="fas fa-file-upload"></i> 導入代碼
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary mb-2" data-operation="paste">
+                        <i class="fas fa-paste"></i> 貼上代碼
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary mb-2" data-operation="replace">
+                        <i class="fas fa-exchange-alt"></i> 替換全部
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary" data-operation="merge">
+                        <i class="fas fa-code-branch"></i> 合併代碼
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        // 添加操作按鈕事件
+        operationMenu.querySelectorAll('button').forEach(button => {
+            button.addEventListener('click', () => {
+                const operation = button.dataset.operation;
+                this.simulateConflictOperation(operation);
+                operationMenu.classList.add('d-none');
+            });
+        });
+        
+        // 將選單添加到按鈕旁
+        conflictBtn.parentNode.appendChild(operationMenu);
+        
+        // 點擊衝突分析按鈕時顯示選單
+        conflictBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            operationMenu.classList.toggle('d-none');
+        });
+        
+        // 點擊其他地方時隱藏選單
+        document.addEventListener('click', (e) => {
+            if (!conflictBtn.contains(e.target) && !operationMenu.contains(e.target)) {
+                operationMenu.classList.add('d-none');
+            }
+        });
+    }
 
     // 載入歷史記錄從本地存儲
     loadHistoryFromStorage() {

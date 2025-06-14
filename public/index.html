@@ -81,6 +81,37 @@
         }
         
         /* 更多必要的基礎樣式可以在這裡添加，以減少對外部CSS文件的依賴，並確保JS控制的樣式有基礎 */
+        
+        /* 衝突預警樣式 */
+        .conflict-warning {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            max-width: 400px;
+        }
+        
+        .operation-menu {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            z-index: 1000;
+            min-width: 200px;
+            margin-top: 5px;
+        }
+        
+        .operation-menu .card {
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        
+        .operation-menu .btn {
+            width: 100%;
+            text-align: left;
+        }
+        
+        .d-none {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
