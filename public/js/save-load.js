@@ -3,9 +3,13 @@ console.log('📄 載入 save-load.js 模組');
 
 class SaveLoadManager {
     constructor() {
+        this.slots = {};
         this.currentUser = null;
-        this.roomId = null;
+        this.currentRoom = null;
         this.isInitialized = false;
+        this.loadRetryCount = 0;
+        this.maxLoadRetries = 3;
+        this.loadRetryDelay = 1000; // 1秒
         this.userSlots = {}; // 🆕 用戶槽位數據 {slotNumber: {name: string, code: string, timestamp: number}}
         
         console.log('💾 SaveLoadManager 初始化');
@@ -44,7 +48,7 @@ class SaveLoadManager {
     // 🆕 獲取用戶專屬的存儲鍵
     getUserStorageKey() {
         const userName = this.currentUser?.name || 'guest';
-        const roomId = this.roomId || 'default';
+        const roomId = this.currentRoom || 'default';
         return `userCodeSlots_${userName}_${roomId}`;
     }
 
@@ -239,20 +243,68 @@ class SaveLoadManager {
     }
 
     // 🆕 從槽位載入
-    loadFromSlot(slotNumber) {
-        console.log(`📂 從槽位 ${slotNumber} 載入`);
-        if (!this.checkInitialized()) {
-            return;
+    async loadFromSlot(slotId, retryCount = 0) {
+        console.log(`📂 從槽位 ${slotId} 載入`);
+        
+        if (!this.isInitialized) {
+            console.error('❌ SaveLoadManager 尚未初始化');
+            return false;
         }
 
-        const slot = this.userSlots[slotNumber];
-        if (!slot) {
-            this.showMessage(`槽位 ${slotNumber} 是空的`, 'warning');
-            return;
-        }
+        try {
+            // 檢查槽位是否存在
+            if (!this.userSlots[slotId]) {
+                console.error(`❌ 槽位 ${slotId} 不存在`);
+                return false;
+            }
 
-        // 確認載入對話框
-        this.showSlotLoadConfirmDialog(slotNumber, slot);
+            const slotData = this.userSlots[slotId];
+            
+            // 檢查數據完整性
+            if (!slotData || !slotData.code) {
+                console.error(`❌ 槽位 ${slotId} 數據無效`);
+                return false;
+            }
+
+            // 設置代碼到編輯器
+            if (window.Editor && Editor.setCode) {
+                Editor.setCode(slotData.code);
+                
+                console.log(`✅ 槽位 ${slotId} 載入成功:`, slotData);
+                this.loadRetryCount = 0; // 重置重試計數
+                return true;
+            } else {
+                console.error('❌ 編輯器未就緒');
+                
+                // 如果編輯器未就緒且未超過最大重試次數，則重試
+                if (retryCount < this.maxLoadRetries) {
+                    console.log(`🔄 等待 ${this.loadRetryDelay}ms 後重試載入 (${retryCount + 1}/${this.maxLoadRetries})`);
+                    
+                    return new Promise(resolve => {
+                        setTimeout(() => {
+                            resolve(this.loadFromSlot(slotId, retryCount + 1));
+                        }, this.loadRetryDelay);
+                    });
+                }
+                
+                return false;
+            }
+        } catch (error) {
+            console.error(`❌ 載入槽位 ${slotId} 時發生錯誤:`, error);
+            
+            // 如果發生錯誤且未超過最大重試次數，則重試
+            if (retryCount < this.maxLoadRetries) {
+                console.log(`🔄 等待 ${this.loadRetryDelay}ms 後重試載入 (${retryCount + 1}/${this.maxLoadRetries})`);
+                
+                return new Promise(resolve => {
+                    setTimeout(() => {
+                        resolve(this.loadFromSlot(slotId, retryCount + 1));
+                    }, this.loadRetryDelay);
+                });
+            }
+            
+            return false;
+        }
     }
 
     // 🆕 顯示槽位載入確認對話框
@@ -312,26 +364,31 @@ class SaveLoadManager {
     }
 
     // 🆕 執行槽位載入
-    executeSlotLoad(slotNumber) {
-        const slot = this.userSlots[slotNumber];
-        if (!slot) {
-            this.showMessage(`槽位 ${slotNumber} 不存在`, 'error');
-            return;
+    async globalExecuteSlotLoad(slotId) {
+        console.log(`🔍 globalExecuteSlotLoad 被調用: ${slotId}`);
+        
+        try {
+            const success = await this.loadFromSlot(slotId);
+            
+            if (success) {
+                console.log(`SUCCESS: 已從槽位 ${slotId} 載入: ${this.userSlots[slotId].name}`);
+            } else {
+                console.error(`ERROR: 從槽位 ${slotId} 載入失敗`);
+                // 顯示錯誤提示
+                if (typeof showToast === 'function') {
+                    showToast('error', `載入失敗：請稍後重試`);
+                }
+            }
+            
+            return success;
+        } catch (error) {
+            console.error('❌ globalExecuteSlotLoad 執行失敗:', error);
+            // 顯示錯誤提示
+            if (typeof showToast === 'function') {
+                showToast('error', `載入失敗：${error.message}`);
+            }
+            return false;
         }
-
-        // 載入到編輯器
-        if (window.Editor && Editor.setCode) {
-            Editor.setCode(slot.code);
-            this.showMessage(`已從槽位 ${slotNumber} 載入: ${slot.name}`, 'success');
-            console.log(`✅ 槽位 ${slotNumber} 載入成功:`, slot);
-        } else {
-            this.showMessage('編輯器未準備好', 'error');
-            return;
-        }
-
-        // 關閉模態框
-        const modal = bootstrap.Modal.getInstance(document.getElementById('slotLoadModal'));
-        if (modal) modal.hide();
     }
 
     // 顯示提示訊息的備用函數
@@ -348,15 +405,25 @@ class SaveLoadManager {
     }
 
     // 初始化
-    init(user, roomId) {
-        this.currentUser = user;
-        this.roomId = roomId;
-        this.isInitialized = true;
+    initialize(userData) {
+        if (this.isInitialized) {
+            console.log('💾 SaveLoadManager 已經初始化');
+            return;
+        }
+
+        const { userName, roomName } = userData;
+        console.log(`💾 初始化 SaveLoadManager - 用戶: ${userName}, 房間: ${roomName}`);
         
-        // 🆕 重新載入用戶專屬的槽位數據
-        this.loadSlotsFromStorage();
+        this.currentUser = userName;
+        this.currentRoom = roomName;
         
-        console.log(`💾 SaveLoadManager 已初始化 - 用戶: ${user.name}, 房間: ${roomId}`);
+        // 載入槽位數據
+        this.loadSlots().then(() => {
+            this.isInitialized = true;
+            console.log(`💾 SaveLoadManager 已初始化 - 用戶: ${userName}, 房間: ${roomName}`);
+        }).catch(error => {
+            console.error('❌ SaveLoadManager 初始化失敗:', error);
+        });
     }
 
     // 檢查是否已初始化
@@ -450,8 +517,8 @@ class SaveLoadManager {
             type: 'save_code',
             code: code,
             title: title || `程式碼保存 - ${new Date().toLocaleString()}`,
-            roomId: this.roomId,
-            author: this.currentUser.name,
+            roomId: this.currentRoom,
+            author: this.currentUser,
             timestamp: Date.now()
         };
 
@@ -584,7 +651,7 @@ class SaveLoadManager {
         
         const loadData = {
             type: 'load_code',
-            roomId: this.roomId,
+            roomId: this.currentRoom,
             loadLatest: true
         };
 
@@ -597,7 +664,7 @@ class SaveLoadManager {
         
         const loadData = {
             type: 'load_code',
-            roomId: this.roomId,
+            roomId: this.currentRoom,
             saveId: saveId
         };
 
@@ -822,7 +889,7 @@ class SaveLoadManager {
     requestHistory(callback) {
         const requestData = {
             type: 'get_history',
-            roomId: this.roomId
+            roomId: this.currentRoom
         };
 
         console.log('📚 請求歷史記錄:', requestData);
@@ -996,7 +1063,7 @@ class SaveLoadManager {
     debugGetCurrentUser() {
         return {
             currentUser: this.currentUser,
-            roomId: this.roomId,
+            roomId: this.currentRoom,
             isInitialized: this.isInitialized,
             userSlots: this.userSlots,
             storageKey: this.getUserStorageKey()
@@ -1039,10 +1106,10 @@ window.globalExecuteSlotSave = function(slotNumber, isOverwrite = false) {
 
 window.globalExecuteSlotLoad = function(slotNumber) {
     console.log('🔍 globalExecuteSlotLoad 被調用:', slotNumber);
-    if (window.SaveLoadManager && typeof window.SaveLoadManager.executeSlotLoad === 'function') {
-        window.SaveLoadManager.executeSlotLoad(slotNumber);
+    if (window.SaveLoadManager && typeof window.SaveLoadManager.globalExecuteSlotLoad === 'function') {
+        window.SaveLoadManager.globalExecuteSlotLoad(slotNumber);
     } else {
-        console.error('❌ SaveLoadManager.executeSlotLoad 不可用');
+        console.error('❌ SaveLoadManager.globalExecuteSlotLoad 不可用');
         alert('槽位載入功能暫時不可用，請重新載入頁面');
     }
 };
