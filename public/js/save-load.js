@@ -378,7 +378,7 @@ class SaveLoadManager {
             return;
         }
 
-        const code = window.Editor.getValue();
+        const code = window.Editor.getCode();
         if (!code) {
             this.showMessage('無法保存：程式碼為空', 'error');
             return;
