@@ -373,7 +373,7 @@
             console.log('🔄 全域載入函數被調用:', loadType);
             if (window.SaveLoadManager) {
                 if (loadType === 'latest') {
-                    window.SaveLoadManager.loadLatestCode();
+                    window.SaveLoadManager.loadFromLatest();
                 } else {
                     window.SaveLoadManager.showLoadDialog();
                 }

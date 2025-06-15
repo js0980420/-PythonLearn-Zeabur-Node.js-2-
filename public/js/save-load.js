@@ -372,6 +372,12 @@ class SaveLoadManager {
 
     // 保存代碼到最新槽位
     saveToLatest() {
+        if (!window.editor) {
+            console.error('❌ Editor not initialized');
+            this.showMessage('編輯器未初始化', 'error');
+            return;
+        }
+
         const code = window.editor.getValue();
         if (!code) {
             this.showMessage('無法保存：程式碼為空', 'error');
@@ -968,6 +974,11 @@ class SaveLoadManager {
         document.getElementById('loadDropdownBtn').addEventListener('click', () => {
             this.showLoadDropdown();
         });
+    }
+
+    // 全域方法
+    loadLatestCode() {
+        this.loadFromLatest();
     }
 }
 
