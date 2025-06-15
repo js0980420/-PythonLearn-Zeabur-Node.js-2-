@@ -727,102 +727,25 @@ class EditorManager {
         }, 10000); // 10秒超時檢查
     }
 
-    // 發送代碼變更 - 🔧 增加衝突預警機制
+    // 發送代碼變更
     sendCodeChange(forceUpdate = false, operation = null) {
-        if (!wsManager.isConnected() || !this.editor) {
+        if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN || !this.editor) {
             console.log('❌ WebSocket 未連接或編輯器未初始化，無法發送代碼變更');
             return;
         }
 
         const code = this.editor.getValue();
         
-        console.log(`📤 準備發送代碼變更 - 強制發送: ${forceUpdate}, 用戶: ${wsManager.currentUser}, 操作類型: ${operation || '一般編輯'}`);
-        
-        // 🔧 新增：衝突預警檢查（只在非強制更新時進行）
-        if (!forceUpdate && this.shouldShowConflictWarning()) {
-            const conflictInfo = this.getConflictWarningInfo();
-            
-            // 創建模態對話框
-            const modalHTML = `
-                <div class="modal fade" id="conflictWarningModal" tabindex="-1">
-                    <div class="modal-dialog modal-lg">
-                        <div class="modal-content">
-                            <div class="modal-header bg-warning">
-                                <h5 class="modal-title">
-                                    <i class="fas fa-exclamation-triangle"></i> 衝突預警
-                                </h5>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                            </div>
-                            <div class="modal-body">
-                                <div class="alert alert-warning">
-                                    <p><strong>檢測到其他同學可能正在編輯中：</strong></p>
-                                    <p class="mb-0">${conflictInfo.activeUsers.join(', ')}</p>
-                                </div>
-                                <div class="conflict-details">
-                                    <p><strong>操作類型：</strong> ${operation || '一般編輯'}</p>
-                                    <p><strong>修改範圍：</strong> ${conflictInfo.range ? `第 ${conflictInfo.range.from + 1} 到 ${conflictInfo.range.to + 1} 行` : '未知'}</p>
-                                </div>
-                                <div class="mt-3">
-                                    <p>建議操作：</p>
-                                    <ul>
-                                        <li>先與其他同學溝通確認</li>
-                                        <li>使用即時通訊功能討論修改計劃</li>
-                                        <li>考慮分段進行修改</li>
-                                    </ul>
-                                </div>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                                <button type="button" class="btn btn-warning" id="proceedWithChanges">
-                                    <i class="fas fa-check"></i> 繼續修改
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-            
-            // 移除舊的模態框（如果存在）
-            const oldModal = document.getElementById('conflictWarningModal');
-            if (oldModal) {
-                oldModal.remove();
-            }
-            
-            // 添加新的模態框
-            document.body.insertAdjacentHTML('beforeend', modalHTML);
-            
-            // 獲取模態框元素
-            const modalElement = document.getElementById('conflictWarningModal');
-            const modal = new bootstrap.Modal(modalElement);
-            
-            // 添加事件監聽器
-            modalElement.querySelector('#proceedWithChanges').addEventListener('click', () => {
-                modal.hide();
-                this.sendCodeChangeToServer(code, true, operation);
-            });
-            
-            // 顯示模態框
-            modal.show();
-            
-            return;
-        }
+        console.log(`📤 準備發送代碼變更 - 強制發送: ${forceUpdate}, 用戶: ${window.wsManager.currentUser}, 操作類型: ${operation || '一般編輯'}`);
         
         // 發送代碼變更到服務器
-        this.sendCodeChangeToServer(code, forceUpdate, operation);
-    }
-
-    // 發送代碼變更到服務器
-    sendCodeChangeToServer(code, forceUpdate = false, operation = null) {
-        const message = {
+        window.wsManager.sendMessage({
             type: 'code_change',
             code: code,
             forced: forceUpdate,
             operation: operation,
             version: this.codeVersion
-        };
-        
-        wsManager.sendMessage(message);
-        console.log('📤 代碼變更已發送到服務器');
+        });
     }
 
     // 確認發送代碼
@@ -836,6 +759,12 @@ class EditorManager {
 
     // 使用 AI 分析潛在衝突
     async analyzeConflictWithAI() {
+        if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN) {
+            console.error('❌ WebSocket 未連接，無法進行 AI 分析');
+            UI.showErrorToast('無法連接到服務器，請稍後再試');
+            return;
+        }
+
         const currentCode = this.editor.getValue();
         const message = {
             type: 'ai_request',
@@ -843,12 +772,12 @@ class EditorManager {
             code: currentCode,
             context: {
                 activeUsers: Array.from(this.collaboratingUsers),
-                currentUser: wsManager.currentUser
+                currentUser: window.wsManager.currentUser
             }
         };
 
         try {
-            const response = await wsManager.sendMessage(message);
+            const response = await window.wsManager.sendMessage(message);
             // AI 分析結果會通過 WebSocket 返回
             console.log('✅ AI 分析請求已發送');
         } catch (error) {
@@ -890,7 +819,7 @@ class EditorManager {
         // 這個方法需要與用戶列表管理結合
         // 目前先返回已知的協作用戶
         const collaborators = Array.from(this.collaboratingUsers || []);
-        return collaborators.filter(user => user !== wsManager.currentUser);
+        return collaborators.filter(user => user !== window.wsManager.currentUser);
     }
 
     // 載入歷史記錄從本地存儲
@@ -1074,16 +1003,34 @@ class EditorManager {
         
         // 監聽游標移動
         this.editor.on('cursorActivity', () => {
-            this.handleCursorActivity();
+            if (window.wsManager && window.wsManager.ws && window.wsManager.ws.readyState === WebSocket.OPEN) {
+                const cursor = this.editor.getCursor();
+                window.wsManager.sendMessage({
+                    type: 'cursor_change',
+                    position: cursor
+                });
+            }
         });
         
         // 監聽焦點變化
         this.editor.on('focus', () => {
             this.handleEditorFocus();
+            if (window.wsManager && window.wsManager.ws && window.wsManager.ws.readyState === WebSocket.OPEN) {
+                window.wsManager.sendMessage({
+                    type: 'editor_focus',
+                    focused: true
+                });
+            }
         });
         
         this.editor.on('blur', () => {
             this.handleEditorBlur();
+            if (window.wsManager && window.wsManager.ws && window.wsManager.ws.readyState === WebSocket.OPEN) {
+                window.wsManager.sendMessage({
+                    type: 'editor_focus',
+                    focused: false
+                });
+            }
         });
         
         console.log('✅ 編輯器事件已初始化');
