@@ -962,10 +962,10 @@ class EditorManager {
 
     // 檢查代碼衝突
     checkConflicts(change, operation = null) {
-        if (!this.editor || !wsManager) return;
+        if (!this.editor || !window.wsManager) return;
         
         // 獲取當前房間的用戶列表
-        const activeUsers = wsManager.getActiveUsers();
+        const activeUsers = window.wsManager.getActiveUsers();
         
         // 如果房間內只有一個用戶，不需要檢查衝突
         if (activeUsers.length <= 1) {
@@ -981,7 +981,7 @@ class EditorManager {
         const conflictingUsers = [];
         activeUsers.forEach(user => {
             // 跳過自己
-            if (user.userName === wsManager.currentUser) return;
+            if (user.userName === window.wsManager.currentUser) return;
             
             // 檢查用戶是否正在編輯
             if (user.isEditing && user.position) {
@@ -1009,7 +1009,7 @@ class EditorManager {
             if (window.conflictManager) {
                 // 傳遞操作類型和中心行號
                 const centerLine = Math.floor((from + to) / 2) + 1; // 轉換為1-based行號
-                conflictManager.showConflictWarning(conflictingUsers, operation, centerLine);
+                window.conflictManager.showConflictWarning(conflictingUsers, operation, centerLine);
             }
         }
     }

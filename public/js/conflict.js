@@ -72,12 +72,24 @@ class ConflictResolverManager {
             
             // 如果同一行的上次衝突警告在一分鐘內，則不顯示
             if (now - lastTime < 60000) {
-                console.log('⏱️ 忽略頻繁的衝突警告:', conflictKey);
+                console.log('⏱️ 忽略頻繁的衝突警告:', {
+                    conflictKey,
+                    timeSinceLastWarning: now - lastTime,
+                    lineNumber,
+                    users: conflictingUsers.map(u => u.userName)
+                });
                 return;
             }
             
             // 更新最後衝突時間
             this.lastConflictTimes.set(conflictKey, now);
+            
+            // 清理過期的時間記錄
+            for (const [key, time] of this.lastConflictTimes.entries()) {
+                if (now - time > 60000) {
+                    this.lastConflictTimes.delete(key);
+                }
+            }
         }
         
         // 檢查是否已經顯示相同的警告

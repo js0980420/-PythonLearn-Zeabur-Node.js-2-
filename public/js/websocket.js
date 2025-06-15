@@ -11,7 +11,8 @@ class WebSocketManager {
         this.reconnectDelay = 1000;
         this.messageQueue = [];
         this.heartbeatInterval = null;
-        this.lastHeartbeat = 0;
+        this.lastHeartbeat = Date.now();
+        console.log('🔧 WebSocketManager 已創建');
     }
 
     // 獲取當前房間的活躍用戶列表
@@ -183,13 +184,18 @@ class WebSocketManager {
 
     // 發送消息
     sendMessage(message) {
-        if (this.isConnected()) {
+        if (!this.ws) {
+            console.log('📝 WebSocket 未初始化，消息已加入隊列');
+            this.messageQueue.push(message);
+            return;
+        }
+
+        if (this.ws.readyState === WebSocket.OPEN) {
             try {
                 this.ws.send(JSON.stringify(message));
                 console.log('📤 發送消息:', message.type);
             } catch (error) {
                 console.error('❌ 發送消息失敗:', error);
-                // 添加到消息隊列以便重連後發送
                 this.messageQueue.push(message);
             }
         } else {
