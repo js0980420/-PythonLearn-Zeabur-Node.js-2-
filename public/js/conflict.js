@@ -60,35 +60,33 @@ class ConflictResolverManager {
         // 檢查是否是大量修改操作
         const isMassiveChange = operation && this.massiveChangeOperations.has(operation);
         
-        // 生成衝突鍵值
+        // 生成衝突鍵值（包含行號和用戶）
         const conflictKey = lineNumber 
-            ? `${lineNumber}-${conflictingUsers.map(u => u.userName).sort().join(',')}`
+            ? `line-${lineNumber}-${conflictingUsers.map(u => u.userName).sort().join(',')}`
             : conflictingUsers.map(u => u.userName).sort().join(',');
         
-        // 檢查時間限制（對於非大量修改操作）
-        if (!isMassiveChange && lineNumber) {
-            const now = Date.now();
-            const lastTime = this.lastConflictTimes.get(conflictKey) || 0;
-            
-            // 如果同一行的上次衝突警告在一分鐘內，則不顯示
-            if (now - lastTime < 60000) {
-                console.log('⏱️ 忽略頻繁的衝突警告:', {
-                    conflictKey,
-                    timeSinceLastWarning: now - lastTime,
-                    lineNumber,
-                    users: conflictingUsers.map(u => u.userName)
-                });
-                return;
-            }
-            
-            // 更新最後衝突時間
-            this.lastConflictTimes.set(conflictKey, now);
-            
-            // 清理過期的時間記錄
-            for (const [key, time] of this.lastConflictTimes.entries()) {
-                if (now - time > 60000) {
-                    this.lastConflictTimes.delete(key);
-                }
+        // 檢查時間限制
+        const now = Date.now();
+        const lastTime = this.lastConflictTimes.get(conflictKey) || 0;
+        
+        // 如果同一行的上次衝突警告在一分鐘內，則不顯示
+        if (now - lastTime < 60000) { // 60000ms = 1分鐘
+            console.log('⏱️ 忽略頻繁的衝突警告:', {
+                conflictKey,
+                timeSinceLastWarning: now - lastTime,
+                lineNumber,
+                users: conflictingUsers.map(u => u.userName)
+            });
+            return;
+        }
+        
+        // 更新最後衝突時間
+        this.lastConflictTimes.set(conflictKey, now);
+        
+        // 清理過期的時間記錄（超過1分鐘的記錄）
+        for (const [key, time] of this.lastConflictTimes.entries()) {
+            if (now - time > 60000) {
+                this.lastConflictTimes.delete(key);
             }
         }
         
@@ -163,7 +161,7 @@ class ConflictResolverManager {
             users: conflictingUsers,
             lineNumber: lineNumber,
             operation: operation,
-            timestamp: Date.now()
+            timestamp: now
         });
         
         // 顯示警告

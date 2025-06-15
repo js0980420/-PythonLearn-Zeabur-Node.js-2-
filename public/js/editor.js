@@ -856,8 +856,8 @@ class EditorManager {
         const activeUsers = window.wsManager.getActiveUsers();
         
         // 如果房間內只有一個用戶，不需要檢查衝突
-        if (activeUsers.length <= 1) {
-            console.log('👤 房間內只有一個用戶，無需檢查衝突');
+        if (activeUsers.length < 2) {
+            console.log('👥 房間內用戶數不足2人，無需檢查衝突');
             return;
         }
         
