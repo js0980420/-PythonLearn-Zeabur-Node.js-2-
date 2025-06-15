@@ -370,117 +370,62 @@ class SaveLoadManager {
         return true;
     }
 
-    // 保存當前代碼
-    saveCode() {
-        console.log("💾 開始保存代碼");
-        if (!this.checkInitialized() || !window.Editor) {
-            this.showMessage("編輯器未準備好或未加入房間，無法保存。", "error");
-            return;
-        }
-        
-        const code = Editor.getCode();
-        if (!code || code.trim() === '') {
-            this.showMessage('程式碼內容為空，無法保存', 'warning');
+    // 保存代碼到最新槽位
+    saveToLatest() {
+        const code = window.editor.getValue();
+        if (!code) {
+            this.showMessage('無法保存：程式碼為空', 'error');
             return;
         }
 
-        // 顯示保存對話框
-        this.showSaveDialog(code);
-    }
-
-    // 顯示保存對話框
-    showSaveDialog(code) {
-        const modalHTML = `
-            <div class="modal fade" id="saveCodeModal" tabindex="-1" aria-labelledby="saveCodeModalLabel" aria-hidden="true">
-                <div class="modal-dialog">
-                    <div class="modal-content">
-                        <div class="modal-header bg-success text-white">
-                            <h5 class="modal-title" id="saveCodeModalLabel">
-                                <i class="fas fa-save"></i> 保存程式碼
-                            </h5>
-                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-                        </div>
-                        <div class="modal-body">
-                            <div class="mb-3">
-                                <label for="saveTitle" class="form-label">保存標題</label>
-                                <input type="text" class="form-control" id="saveTitle" 
-                                       placeholder="輸入保存標題（可選）" 
-                                       value="程式碼保存 - ${new Date().toLocaleString()}">
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">程式碼預覽</label>
-                                <pre class="bg-light p-2 rounded border" style="max-height: 150px; overflow-y: auto; font-size: 0.9em;">${this.escapeHtml(code)}</pre>
-                            </div>
-                            <div class="text-muted small">
-                                <i class="fas fa-info-circle"></i> 
-                                保存後其他房間成員將收到通知
-                            </div>
-                        </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                            <button type="button" class="btn btn-success" onclick="globalExecuteSave()">
-                                <i class="fas fa-save"></i> 確認保存
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        // 移除舊的模態框
-        const existingModal = document.getElementById('saveCodeModal');
-        if (existingModal) {
-            existingModal.remove();
+        if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN) {
+            this.showMessage('WebSocket 連接未建立，無法保存', 'error');
+            return;
         }
-
-        // 添加新的模態框
-        document.body.insertAdjacentHTML('beforeend', modalHTML);
-
-        // 顯示模態框
-        const modal = new bootstrap.Modal(document.getElementById('saveCodeModal'));
-        modal.show();
-    }
-
-    // 執行保存
-    executeSave() {
-        const title = document.getElementById('saveTitle').value.trim();
-        const code = Editor.getCode();
 
         const saveData = {
             type: 'save_code',
             code: code,
-            title: title || `程式碼保存 - ${new Date().toLocaleString()}`,
+            title: '最新',  // 使用固定的"最新"槽位
             roomId: this.roomId,
             author: this.currentUser.name,
             timestamp: Date.now()
         };
 
         console.log('💾 發送保存請求:', saveData);
-
-        // 通過 WebSocket 發送保存請求
-        if (window.wsManager && window.wsManager.isConnected()) {
-            window.wsManager.sendMessage(saveData);
-            
-            // 關閉模態框
-            const modal = bootstrap.Modal.getInstance(document.getElementById('saveCodeModal'));
-            if (modal) modal.hide();
-            
-            this.showMessage('保存請求已發送...', 'info');
-        } else {
-            this.showMessage('WebSocket 連接未建立，無法保存', 'error');
-        }
+        window.wsManager.sendMessage(saveData);
+        this.showMessage('保存請求已發送...', 'info');
     }
 
-    // 顯示載入對話框
-    showLoadDialog() {
-        console.log("📂 顯示載入對話框");
-        if (!this.checkInitialized()) {
-            this.showMessage("未加入房間，無法載入歷史記錄。", "error");
+    // 從最新槽位載入代碼
+    loadFromLatest() {
+        console.log('📂 載入最新版本');
+        
+        if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN) {
+            this.showMessage('WebSocket 連接未建立，無法載入', 'error');
             return;
         }
-        this.requestHistory((history) => {
-            this.displayLoadDialog(history);
-        });
+
+        const loadData = {
+            type: 'load_code',
+            title: '最新',  // 使用固定的"最新"槽位
+            roomId: this.roomId,
+            author: this.currentUser.name
+        };
+
+        console.log('📂 發送載入請求:', loadData);
+        window.wsManager.sendMessage(loadData);
+        this.showMessage('載入請求已發送...', 'info');
+    }
+
+    // 保存代碼（供保存按鈕使用）
+    saveCode() {
+        this.saveToLatest();
+    }
+
+    // 載入代碼（供載入按鈕使用）
+    loadCode() {
+        this.loadFromLatest();
     }
 
     // 顯示載入界面
@@ -576,52 +521,6 @@ class SaveLoadManager {
         // 顯示模態框
         const modal = new bootstrap.Modal(document.getElementById('loadCodeModal'));
         modal.show();
-    }
-
-    // 載入最新版本
-    loadLatestCode() {
-        console.log('📂 載入最新版本');
-        
-        const loadData = {
-            type: 'load_code',
-            roomId: this.roomId,
-            loadLatest: true
-        };
-
-        this.sendLoadRequest(loadData);
-    }
-
-    // 載入特定版本
-    loadSpecificCode(saveId) {
-        console.log('📂 載入特定版本:', saveId);
-        
-        const loadData = {
-            type: 'load_code',
-            roomId: this.roomId,
-            saveId: saveId
-        };
-
-        this.sendLoadRequest(loadData);
-    }
-
-    // 發送載入請求
-    sendLoadRequest(loadData) {
-        console.log('📤 發送載入請求:', loadData);
-
-        if (window.wsManager && window.wsManager.isConnected()) {
-            window.wsManager.sendMessage(loadData);
-            
-            // 關閉載入對話框
-            const loadModal = document.getElementById('loadCodeModal');
-            if (loadModal) {
-                const modal = bootstrap.Modal.getInstance(loadModal);
-            if (modal) modal.hide();
-            }
-            
-            this.showMessage('載入請求已發送...', 'info');
-        } else {
-            this.showMessage('WebSocket 連接未建立，無法載入', 'error');
-        }
     }
 
     // 預覽程式碼
@@ -1046,6 +945,29 @@ class SaveLoadManager {
         }
         
         return true;
+    }
+
+    // 綁定按鈕事件
+    bindEvents() {
+        // 保存按鈕 - 使用最新槽位
+        document.getElementById('saveBtn').addEventListener('click', () => {
+            this.saveToLatest();
+        });
+
+        // 載入按鈕 - 使用最新槽位
+        document.getElementById('loadBtn').addEventListener('click', () => {
+            this.loadFromLatest();
+        });
+
+        // 保存下拉選單 - 保持原有功能
+        document.getElementById('saveDropdownBtn').addEventListener('click', () => {
+            this.showSaveDropdown();
+        });
+
+        // 載入下拉選單 - 保持原有功能
+        document.getElementById('loadDropdownBtn').addEventListener('click', () => {
+            this.showLoadDropdown();
+        });
     }
 }
 
