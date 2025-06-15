@@ -1450,6 +1450,17 @@ class ConflictResolverManager {
         localStorage.setItem('conflict_history', JSON.stringify(conflictHistory));
         console.log('✅ 衝突記錄已添加到歷史，總記錄數:', conflictHistory.length);
     }
+
+    // 檢查衝突
+    checkConflict() {
+        if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN) {
+            console.error('❌ 無法檢查衝突：WebSocket 未連接');
+            return false;
+        }
+        
+        // 檢查衝突邏輯...
+        return true;
+    }
 }
 
 // 全局衝突解決器實例

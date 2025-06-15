@@ -1002,6 +1002,51 @@ class SaveLoadManager {
             storageKey: this.getUserStorageKey()
         };
     }
+
+    // 檢查是否可以保存
+    canSave() {
+        if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN) {
+            console.log('❌ 無法保存：WebSocket 未連接');
+            return false;
+        }
+        
+        if (!this.editor || !this.editor.getValue()) {
+            console.log('❌ 無法保存：編輯器未初始化或代碼為空');
+            return false;
+        }
+        
+        return true;
+    }
+
+    // 檢查是否可以載入
+    canLoad() {
+        if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN) {
+            console.log('❌ 無法載入：WebSocket 未連接');
+            return false;
+        }
+        
+        if (!this.editor) {
+            console.log('❌ 無法載入：編輯器未初始化');
+            return false;
+        }
+        
+        return true;
+    }
+
+    // 檢查是否可以執行
+    canExecute() {
+        if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN) {
+            console.log('❌ 無法執行：WebSocket 未連接');
+            return false;
+        }
+        
+        if (!this.editor || !this.editor.getValue()) {
+            console.log('❌ 無法執行：編輯器未初始化或代碼為空');
+            return false;
+        }
+        
+        return true;
+    }
 }
 
 // 創建全域實例

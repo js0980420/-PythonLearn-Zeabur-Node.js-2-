@@ -833,7 +833,7 @@ class WebSocketManager {
 
     // 處理消息隊列
     processMessageQueue() {
-        while (this.messageQueue.length > 0 && this.isConnected()) {
+        while (this.messageQueue.length > 0 && this.ws && this.ws.readyState === WebSocket.OPEN) {
             const message = this.messageQueue.shift();
             this.sendMessage(message);
         }
@@ -844,7 +844,7 @@ class WebSocketManager {
         this.stopHeartbeat(); // 確保不會重複啟動
         
         this.heartbeatInterval = setInterval(() => {
-            if (this.isConnected()) {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({ type: 'ping' }));
             }
         }, 30000); // 每30秒發送一次心跳
@@ -863,7 +863,7 @@ class WebSocketManager {
 
     // 離開房間
     leaveRoom() {
-        if (this.isConnected()) {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.sendMessage({
                 type: 'leave_room',
                 room: this.currentRoom
@@ -881,7 +881,7 @@ class WebSocketManager {
 
     // 發送代碼變更
     sendCodeChange(code, forced = false, operation = null) {
-        if (!this.isConnected()) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             console.error('❌ WebSocket 未連接，無法發送代碼變更');
             return;
         }

@@ -176,66 +176,49 @@ class EditorManager {
         }
     }
 
-    // 設置自動保存 - 改為5分鐘
+    // 自動保存代碼
     setupAutoSave() {
         setInterval(() => {
-            if (wsManager.isConnected() && this.editor && this.isEditing && 
-                Date.now() - this.lastAutoSave > 10000) { // 10秒無操作後才自動保存
-                this.saveCode(true); // 標記為自動保存
-                console.log('🔄 自動保存代碼');
+            if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN) {
+                console.log('❌ 自動保存：WebSocket 未連接');
+                return;
             }
-        }, 300000); // 5分鐘 = 300000毫秒
+            
+            if (this.editor && this.isEditing && (Date.now() - this.lastAutoSave) > 30000) {
+                this.saveCode(true);
+            }
+        }, 30000);
+        
+        console.log('✅ 自動保存已設置');
     }
 
     // 保存代碼
     saveCode(isAutoSave = false) {
-        if (!wsManager.isConnected()) {
-            if (window.UI && typeof window.UI.showErrorToast === 'function') {
-                window.UI.showErrorToast("無法保存代碼：請先加入房間。");
-            } else {
-                console.error("無法保存代碼：請先加入房間。");
-            }
+        if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN) {
+            console.log('❌ 無法保存：WebSocket 未連接');
+            return;
+        }
+        
+        if (!this.editor) {
+            console.log('❌ 無法保存：編輯器未初始化');
             return;
         }
         
         const code = this.editor.getValue();
-        let customName = null;
-
-        // 如果是手動保存，則彈出輸入框讓用戶命名
-        if (!isAutoSave) {
-            let name = prompt("請為您的代碼版本命名 (留空則自動命名): ");
-            if (name === null) { // 用戶點擊了取消
-                console.log("用戶取消保存操作。");
-                return;
-            }
-            customName = name.trim();
-        }
-
-        // 生成默認名稱（如果沒有提供或為空）
-        if (customName === null || customName === '') {
-            const now = new Date();
-            customName = isAutoSave ? 
-                         `自動保存 ${now.toLocaleString('zh-TW', { hour12: false })}` :
-                         `手動保存 ${now.toLocaleString('zh-TW', { hour12: false })}`;
+        if (!code) {
+            console.log('❌ 無法保存：代碼為空');
+            return;
         }
         
-        this.saveToHistory(code, customName); // 將名稱傳遞給 saveToHistory
-
-        wsManager.sendMessage({
+        // 發送保存請求
+        window.wsManager.sendMessage({
             type: 'save_code',
             code: code,
-            saveName: customName // 修改為 saveName 以匹配後端
+            isAutoSave: isAutoSave
         });
-
-        // 保存後重置編輯狀態
-        this.resetEditingState();
-
-        if (window.UI && typeof window.UI.showSuccessToast === 'function') {
-            window.UI.showSuccessToast(`代碼已保存: ${customName}`);
-        } else {
-            console.log(`代碼已保存: ${customName}`);
-        }
-        this.updateVersionDisplay(); // 保持版本號更新
+        
+        this.lastAutoSave = Date.now();
+        console.log(`✅ 代碼已${isAutoSave ? '自動' : '手動'}保存`);
     }
 
     // 重置編輯狀態
@@ -280,66 +263,42 @@ class EditorManager {
         }
     }
 
-    // 載入 - 修改為智能載入最新版本
+    // 載入代碼
     loadCode(loadType = 'latest') {
-        if (!wsManager.isConnected()) {
-            if (window.UI && typeof window.UI.showErrorToast === 'function') {
-                window.UI.showErrorToast('未連接到服務器，無法載入');
-            } else {
-                console.error('未連接到服務器，無法載入');
-            }
+        if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN) {
+            console.log('❌ 無法載入：WebSocket 未連接');
             return;
         }
         
-        if (!wsManager.currentRoom) {
-            if (window.UI && typeof window.UI.showErrorToast === 'function') {
-                window.UI.showErrorToast('請先加入房間');
-            } else {
-                console.error('請先加入房間');
-            }
-            return;
-        }
-        
-        // 智能載入邏輯：先檢查是否已是最新版本
-        console.log('🔍 檢查代碼版本狀態...');
-        
-        // 請求載入房間最新代碼（服務器會返回最新版本信息）
-        wsManager.sendMessage({
+        // 發送載入請求
+        window.wsManager.sendMessage({
             type: 'load_code',
-            roomId: wsManager.currentRoom,
-            currentVersion: this.codeVersion // 發送當前版本號給服務器比較
+            loadType: loadType
         });
         
-        if (window.UI && typeof window.UI.showSuccessToast === 'function') {
-            window.UI.showSuccessToast('正在檢查最新代碼...');
-        } else {
-            console.log('正在檢查最新代碼...');
-        }
+        console.log('📥 正在載入代碼...');
     }
 
     // 運行代碼
     runCode() {
-        const code = this.editor.getValue().trim();
-        
-        if (!code) {
-            this.showOutput('錯誤：請先輸入Python代碼', 'error');
+        if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN) {
+            console.log('❌ 無法運行：WebSocket 未連接');
             return;
         }
         
-        // 顯示運行中狀態
-        this.showOutput('正在運行代碼...', 'info');
-        
-        // 發送運行請求到服務器
-        if (wsManager.isConnected()) {
-            wsManager.sendMessage({
-                type: 'run_code',
-                code: code,
-                roomId: wsManager.currentRoom,
-                userName: wsManager.currentUser
-            });
-        } else {
-            this.showOutput('錯誤：未連接到服務器', 'error');
+        const code = this.editor.getValue();
+        if (!code) {
+            console.log('❌ 無法運行：代碼為空');
+            return;
         }
+        
+        // 發送運行請求
+        window.wsManager.sendMessage({
+            type: 'run_code',
+            code: code
+        });
+        
+        console.log('🚀 正在運行代碼...');
     }
 
     // 處理遠端代碼變更
